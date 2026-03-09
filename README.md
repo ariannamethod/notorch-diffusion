@@ -144,14 +144,6 @@ Autoregressive models dominate, but diffusion can:
 
 Still behind autoregressive in quality, but getting closer.
 
-## References
-
-- [D3PM](https://arxiv.org/abs/2107.03006) — Austin et al., 2021
-- [Diffusion-LM](https://arxiv.org/abs/2205.14217) — Li et al., 2022
-- [MDLM](https://arxiv.org/abs/2406.07524) — Sahoo et al., 2024
-- [SimpleDM](https://arxiv.org/abs/2406.04329) — Shi et al., 2024
-- [MicroGPT](https://karpathy.github.io/2026/02/12/microgpt/) — Karpathy. Inspiration for this project.
-
 ## License
 
 MIT
