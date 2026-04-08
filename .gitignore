@@ -1,0 +1,9 @@
+# Build artifacts
+ariannamethod/train_hevlm
+ariannamethod/libnotorch.so
+ariannamethod/*.o
+*.pyc
+__pycache__/
+
+# Do NOT ignore weights — they are small and should be in the repo
+# !weights/
