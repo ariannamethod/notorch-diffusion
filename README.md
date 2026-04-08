@@ -1,148 +1,127 @@
-# Micro Diffusion
+# HeVLM — Hebrew Vision Language Model
 
-**Minimal text diffusion in Python.**
+**1.1M parameter transformer trained with [notorch](https://github.com/ariannamethod/notorch) + [Chuck optimizer](https://github.com/ariannamethod/chuck.optimizer). No PyTorch.**
 
-Karpathy’s [MicroGPT](https://karpathy.github.io/2026/02/12/microgpt/) showed how GPT works in ~200 lines. This does the same for **text diffusion** — a different way to generate text.
+## What This Is
 
-## Autoregressive vs Diffusion
+A character-level (byte-level) language model trained on Hebrew text using pure C neural network infrastructure. Zero Python dependencies for training — just a C compiler and math.
 
-|              |Autoregressive (GPT, etc.)       |Diffusion (This Project)        |
-|--------------|---------------------------------|--------------------------------|
-|**Generation**|Left → Right, one token at a time|All at once, refining from noise|
-|**Attention** |Causal (can only look left)      |Bidirectional (looks everywhere)|
-|**Analogy**   |Writing word by word             |Solving a crossword puzzle      |
-|**Training**  |“Predict next token”             |“Predict erased tokens”         |
-
-## How It Works
-
-Take the name `"emma"`:
-
-```
-Forward (training — add noise by masking):
-  t=0:   e m m a      ← clean
-  t=25:  e _ m a      ← some letters masked
-  t=50:  _ _ m _      ← more masked
-  t=100: _ _ _ _      ← fully masked
-
-Reverse (generation — remove noise by unmasking):
-  t=100: _ _ _ _      ← start from all masked
-  t=75:  _ m _ _      ← fill in confident guesses first
-  t=50:  e m _ a      ← keep going
-  t=0:   e m m a      ← done
-```
-
-Train: “given masked text at noise level t, predict the original.”
-Generate: start from all masks, unmask most confident predictions first.
-
-## Files
-
-|File              |Lines  |Denoiser             |Deps   |                             |
-|------------------|-------|---------------------|-------|-----------------------------|
-|`train_minimal.py`|**143**|2-layer MLP          |NumPy  |Bare minimum.                |
-|`train_pure.py`   |292    |3-layer MLP + skip   |NumPy  |More comments, visualization.|
-|`train.py`        |413    |Transformer (4-layer)|PyTorch|Bidirectional Transformer.   |
-|`names.txt`       |—      |—                    |—      |32K names (U.S. SSA data).   |
-
-Same diffusion algorithm in all three. Only the denoiser is different.
+|               | Value                |
+|---------------|----------------------|
+| **Parameters**| 1,123,456 (~1.12M)  |
+| **Architecture** | 4-layer Transformer |
+| **Embedding** | 128                  |
+| **Heads**     | 4                    |
+| **FFN**       | 512                  |
+| **Context**   | 64 bytes             |
+| **Vocab**     | 256 (byte-level)     |
+| **Optimizer** | Chuck (self-aware Adam) |
+| **Framework** | notorch (pure C)     |
+| **Train loss**| 1.21 EMA (best 0.62)|
+| **Training**  | 3000 steps, ~12 min CPU |
 
 ## Quick Start
 
+### Train from Scratch
+
 ```bash
-# just numpy, no framework
-python3 train_minimal.py
-
-# more verbose, with visualization
-python3 train_pure.py
-
-# transformer version (needs pytorch)
-pip install torch
-python3 train.py
+python train.py
+# or: python train.py --steps 5000 --lr 3e-4 --threshold 1.7
 ```
 
-Trains in a few minutes on CPU. No GPU needed.
+This builds the C training executable and runs it. Weights are saved to `weights/hevlm.bin` if the training loss is below the threshold (default 1.7).
 
-## Example Output
+### Inference (Python)
 
-```
-Forward Process: "raylynn"
-  t=  0 (mask   0.0%): raylynn
-  t= 10 (mask  15.3%): r_ylynn
-  t= 20 (mask  50.6%): ____y_n
-  t= 40 (mask 100.0%): _______
-
-Reverse (generation):
-  t=50: _______________    ← noise
-  t=37: _or_a              ← unmasking
-  t=25: noria              ← done
+```bash
+pip install numpy
+python inference.py
+# or: python inference.py --seed "להרגיש" --tokens 50 --temperature 0.8
 ```
 
-Generated names:
+### Inference (Browser)
 
-```
-train_minimal.py : timea, zaniya, juno, amira, mana, harin, daren
-train_pure.py    : kayana, marina, kalina, maren, maria, damira, casiana
-train.py         : noria, ava, randi, erynn, zaynna, lalisa, branyl
-```
+Open `inference.html` in a browser. It loads the same `weights/hevlm.bin` and runs the identical transformer in JavaScript — no server needed.
 
-Temperature:
-
-```
-0.5: mara, ralya, lenah, kal, mal           ← safe
-0.8: noria, ava, randi, erynn, lalisa       ← balanced
-1.0: rahany, korianth, maheon               ← adventurous
-1.5: aridpye, nzllauae, diryta             ← falling apart
+Serve locally:
+```bash
+python -m http.server 8000
+# Open http://localhost:8000/inference.html
 ```
 
-## Concepts
+### Run Tests
 
-**Discrete diffusion.** Image diffusion adds Gaussian noise to pixels. Text is discrete, so we use masking instead — replace tokens with `[MASK]`. This is called “absorbing state” diffusion.
+```bash
+python tests/test_model.py
+```
 
-**Cosine schedule.** Masks tokens slowly at first, then faster. Works better than masking at a constant rate.
+## Files
 
-**Bidirectional attention.** GPT uses causal masking (can’t look right). Diffusion models look at all positions, since they refine everything at once.
-
-**Confidence-based unmasking.** At each step, only reveal the predictions the model is most sure about. Less sure ones stay masked for later.
-
-**Temperature.** Low = safe/common results. High = weird/creative results.
+| File | Description |
+|------|-------------|
+| `ariannamethod/notorch.c` | notorch — neural network library in pure C |
+| `ariannamethod/notorch.h` | notorch header |
+| `ariannamethod/train_hevlm.c` | C training program (transformer + Chuck optimizer) |
+| `ariannamethod/Makefile` | Build system |
+| `ariannamethod/notorch_wrapper.py` | Python ctypes bindings + numpy inference |
+| `train.py` | Python training script (builds and runs C) |
+| `inference.py` | Python inference script |
+| `inference.html` | Browser inference (JavaScript, same architecture) |
+| `hevlm.txt` | Hebrew training corpus (~70KB, 2500 lines) |
+| `weights/hevlm.bin` | Trained weights (4.3MB) |
+| `tests/test_model.py` | 14 tests: weights, forward pass, generation |
 
 ## Architecture
 
-MLP version (`train_minimal.py`, `train_pure.py`):
-
 ```
-one-hot(noisy tokens) + timestep → Linear → ReLU → Linear → logits
-```
-
-Transformer version (`train.py`):
-
-```
-Token Embed + Pos Embed + Time Embed → Transformer × 4 → logits
+Input bytes → Token Embed [256, 128] + Pos Embed [64, 128]
+  ↓
+Transformer Block ×4:
+  → RMSNorm → Multi-Head Causal Attention (4 heads, dim 32) → Residual
+  → RMSNorm → SiLU-Gated FFN (128 → 512 → 128) → Residual
+  ↓
+RMSNorm → Linear Head [128, 256] → Logits
 ```
 
-The diffusion loop is the same in both. The denoiser is swappable — MLP, Transformer, CNN, whatever.
+Same forward pass runs in:
+- **C** (training, via notorch autograd tape)
+- **Python** (inference, via numpy)
+- **JavaScript** (browser inference, via Float32Array)
 
-## Toy vs Production
+## Training Results
 
-|        |Here                             |Production (MDLM, SEDD, etc.)|
-|--------|---------------------------------|-----------------------------|
-|Data    |32K names                        |Billions of tokens           |
-|Vocab   |28 (a-z + pad + mask)            |32K-100K BPE                 |
-|Model   |2-layer MLP / 4-layer Transformer|12-48 layer Transformer      |
-|Params  |170K-206K                        |100M-10B                     |
-|Training|Minutes, CPU                     |Days/weeks, GPU cluster      |
+```
+step    1 | loss 5.6844 | ema 5.6844
+step  500 | loss 1.5626 | ema 1.6395
+step 1000 | loss 1.4041 | ema 1.5145
+step 1500 | loss 1.4144 | ema 1.3894
+step 2000 | loss 0.9952 | ema 1.3004
+step 2500 | loss 1.0872 | ema 1.2349
+step 3000 | loss 1.0743 | ema 1.2105   ← final
 
-Same core loop: mask → denoise → unmask.
+loss: 5.68 → 1.07 (EMA 1.21, best 0.62)
+reduction: 78.7%
+0 NaN detections
+```
 
-## Why Care About Text Diffusion
+## notorch
 
-Autoregressive models dominate, but diffusion can:
+[notorch](https://github.com/ariannamethod/notorch) is a PyTorch replacement in pure C. It provides:
+- Tensors with reference counting
+- Autograd tape (reverse-mode automatic differentiation)
+- Forward ops: embedding, linear, RMSNorm, multi-head attention, SiLU, GELU, cross-entropy
+- Optimizers: Adam, AdamW, **Chuck** (self-aware Adam with 9 levels of awareness)
+- LR schedules: cosine annealing, step decay, linear
+- NaN guard with dynamic loss scaling
+- Binary weight save/load
 
-- Generate all tokens in parallel
-- Edit any part of text (not just append)
-- Control what goes where more easily
-- Generate in any order, not just left to right
+## Chuck Optimizer
 
-Still behind autoregressive in quality, but getting closer.
+Chuck is a self-aware extension of Adam built into notorch. It monitors gradient statistics, loss trends, and learning dynamics to adaptively adjust the learning rate per-parameter. No hyperparameter tuning needed — Chuck sees what Adam can't.
+
+```
+θ -= (α × S × λ_Ψ × λ_l × σ) × m̂/(√v̂ + ε) + η
+```
 
 ## License
 

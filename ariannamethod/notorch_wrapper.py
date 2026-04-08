@@ -181,7 +181,7 @@ def _tensor_to_numpy(tensor_ptr):
 
 # ── Weight loading (binary format matching nt_save/nt_load) ──
 
-WEIGHT_MAGIC = 0x4E545748  # "NTWH" — notorch weights header
+WEIGHT_MAGIC = 0x4E544F52  # "NTOR" — notorch weights header (from nt_save)
 
 
 def load_weights_numpy(path):
