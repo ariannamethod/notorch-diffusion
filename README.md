@@ -88,6 +88,60 @@ Same forward pass runs in:
 - **Python** (inference, via numpy)
 - **JavaScript** (browser inference, via Float32Array)
 
+## Example Outputs
+
+Real model outputs — generated from `weights/hevlm.bin` (3000 steps, Chuck optimizer).
+
+### Various Seeds (temp=0.5, top_k=20)
+
+```
+seed: להרגיש    →  להרגיש על הכל
+                   הגוף אומור
+seed: הגוף      →  הגוף שמתחות בחות
+                   הגוף שומר
+seed: לשמוע     →  לשמועות
+                   להרתגיש אולים של הב
+seed: להתעורר   →  להתעורר ששמה
+                   להרגיש אוני ולהר
+seed: לרקוד     →  לרקוד מתאת הקה
+                   לרות הגוף של
+seed: לדבר      →  לדבר מתים
+                   הרגיש מתאורן מגו
+```
+
+### Corpus Seeds (temp=0.5, top_k=20)
+
+```
+seed: הגוף כמו חול      →  הגוף כמו חולאור
+                            הגוף בזמן ברור
+seed: חום באוזניים       →  חום באוזניים הלים בים מלינים שמות
+seed: לקום מהאשמה        →  לקום מהאשמה
+                            הגוף בזמן אומן
+seed: ריקנות שמייבשת     →  ריקנות שמייבשת
+                            הרות שתים שובות
+```
+
+### Temperature Comparison
+
+```
+temp=0.3 (conservative):
+  להרגיש את הגוף את הגוף
+  להרגיש בלים
+  לנשות את הי
+
+temp=0.8 (balanced):
+  להרגיש על הכל
+  הגוף אומור
+  לא ל
+
+temp=1.2 (creative):
+  להרגיש ף למב אור זול
+  להרגיש נמה
+  צלוק בלרצעו
+```
+
+> **Note:** This is a 1.12M character-level model trained on 70KB of Hebrew text in 12 minutes on CPU. It learns Hebrew word/morpheme patterns and structure, but doesn't produce fluent long text — that would require more data and parameters. For a 1M model this is solid.
+
 ## Training Results
 
 ```
