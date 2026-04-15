@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HeVLM — Hebrew Vision Language Model (notorch)</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: #0a0a0f;
+    color: #e0e0e0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+.container {
+    max-width: 800px;
+    width: 100%;
+    padding: 2rem;
+}
+h1 {
+    font-size: 1.8rem;
+    text-align: center;
+    margin-bottom: 0.3rem;
+    background: linear-gradient(135deg, #60a5fa, #a78bfa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+.subtitle {
+    text-align: center;
+    color: #888;
+    font-size: 0.85rem;
+    margin-bottom: 2rem;
+}
+.subtitle a { color: #60a5fa; text-decoration: none; }
+.card {
+    background: #141420;
+    border: 1px solid #2a2a3a;
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+}
+.card h2 {
+    font-size: 1rem;
+    color: #a78bfa;
+    margin-bottom: 1rem;
+}
+label {
+    display: block;
+    font-size: 0.85rem;
+    color: #999;
+    margin-bottom: 0.3rem;
+}
+textarea, input[type=text] {
+    width: 100%;
+    background: #1a1a2e;
+    border: 1px solid #333;
+    border-radius: 8px;
+    color: #e0e0e0;
+    padding: 0.7rem;
+    font-size: 1rem;
+    font-family: inherit;
+    direction: rtl;
+    resize: vertical;
+}
+textarea:focus, input:focus { outline: none; border-color: #60a5fa; }
+.controls {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    align-items: end;
+    margin-top: 1rem;
+}
+.control-group { flex: 1; min-width: 120px; }
+.control-group input[type=range] { width: 100%; }
+.control-group .val { font-size: 0.8rem; color: #60a5fa; }
+button {
+    background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 0.7rem 1.5rem;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: opacity 0.2s;
+    min-width: 140px;
+}
+button:hover { opacity: 0.9; }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+#output {
+    min-height: 120px;
+    white-space: pre-wrap;
+    font-size: 1.1rem;
+    line-height: 1.8;
+    direction: rtl;
+    text-align: right;
+    color: #f0f0f0;
+}
+#output .seed { color: #60a5fa; }
+#output .gen { color: #a78bfa; }
+.status {
+    text-align: center;
+    padding: 1rem;
+    color: #888;
+    font-size: 0.9rem;
+}
+.status.loading { color: #fbbf24; }
+.status.ready { color: #34d399; }
+.status.error { color: #f87171; }
+.stats {
+    display: flex;
+    gap: 2rem;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-top: 1rem;
+}
+.stat { text-align: center; }
+.stat .num { font-size: 1.5rem; font-weight: bold; color: #60a5fa; }
+.stat .lbl { font-size: 0.75rem; color: #888; }
+.footer {
+    text-align: center;
+    color: #555;
+    font-size: 0.75rem;
+    padding: 2rem 0;
+}
+.footer a { color: #60a5fa; text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="container">
+    <h1>HeVLM 🇮🇱</h1>
+    <p class="subtitle">
+        Hebrew Vision Language Model · 1.1M params · <a href="https://github.com/ariannamethod/notorch">notorch</a> + Chuck optimizer
+    </p>
+
+    <div id="statusCard" class="card">
+        <div id="status" class="status loading">⏳ Loading model weights...</div>
+        <div class="stats" id="statsArea" style="display:none">
+            <div class="stat"><div class="num" id="statParams">—</div><div class="lbl">parameters</div></div>
+            <div class="stat"><div class="num" id="statLayers">4</div><div class="lbl">layers</div></div>
+            <div class="stat"><div class="num" id="statWeightSize">—</div><div class="lbl">weight size</div></div>
+            <div class="stat"><div class="num" id="statVocab">256</div><div class="lbl">vocab (bytes)</div></div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>🔤 Input</h2>
+        <label for="seedInput">Seed text (Hebrew)</label>
+        <textarea id="seedInput" rows="2" placeholder="לכתוב משהו בעברית...">להרגיש</textarea>
+
+        <div class="controls">
+            <div class="control-group">
+                <label>Temperature: <span class="val" id="tempVal">0.8</span></label>
+                <input type="range" id="tempSlider" min="0.1" max="2.0" step="0.05" value="0.8">
+            </div>
+            <div class="control-group">
+                <label>Top-K: <span class="val" id="topkVal">40</span></label>
+                <input type="range" id="topkSlider" min="0" max="256" step="1" value="40">
+            </div>
+            <div class="control-group">
+                <label>Tokens: <span class="val" id="tokensVal">50</span></label>
+                <input type="range" id="tokensSlider" min="10" max="60" step="1" value="50">
+            </div>
+            <button id="generateBtn" disabled onclick="generate()">✨ Generate</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>📝 Output</h2>
+        <div id="output"><span style="color:#666">Model loading...</span></div>
+    </div>
+</div>
+
+<div class="footer">
+    Powered by <a href="https://github.com/ariannamethod/notorch">notorch</a>
+    · Chuck optimizer · No PyTorch · Pure C → JS inference
+    <br>Architecture: 4-layer Transformer · E=128 · H=4 · FFN=512 · CTX=64
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════════════════════
+// HeVLM Browser Inference — notorch model in JavaScript
+// Identical architecture to train_hevlm.c / notorch_wrapper.py
+// V=256, E=128, H=4, HD=32, FFN=512, CTX=64, L=4
+// ══════════════════════════════════════════════════════════════════════
+
+const V = 256, E = 128, H = 4, HD = E / H, FFN = 512, CTX = 64, N_LAYERS = 4;
+
+// ── Tensor operations ────────────────────────────────────────────────
+
+function matmul(A, B, M, K, N) {
+    // A[M×K] @ B[K×N] → C[M×N]
+    const C = new Float32Array(M * N);
+    for (let i = 0; i < M; i++) {
+        for (let k = 0; k < K; k++) {
+            const aik = A[i * K + k];
+            if (aik === 0) continue;
+            for (let j = 0; j < N; j++) {
+                C[i * N + j] += aik * B[k * N + j];
+            }
+        }
+    }
+    return C;
+}
+
+function matmulT(A, BT, M, K, N) {
+    // A[M×K] @ B^T where BT is [N×K] → C[M×N]
+    const C = new Float32Array(M * N);
+    for (let i = 0; i < M; i++) {
+        for (let j = 0; j < N; j++) {
+            let sum = 0;
+            for (let k = 0; k < K; k++) {
+                sum += A[i * K + k] * BT[j * K + k];
+            }
+            C[i * N + j] = sum;
+        }
+    }
+    return C;
+}
+
+function rmsnorm(x, gamma, T, D) {
+    // RMSNorm each of T positions independently
+    const out = new Float32Array(T * D);
+    for (let t = 0; t < T; t++) {
+        let ss = 0;
+        const off = t * D;
+        for (let i = 0; i < D; i++) ss += x[off + i] * x[off + i];
+        const rms = Math.sqrt(ss / D + 1e-6);
+        for (let i = 0; i < D; i++) {
+            out[off + i] = (x[off + i] / rms) * gamma[i];
+        }
+    }
+    return out;
+}
+
+function silu(x) {
+    const out = new Float32Array(x.length);
+    for (let i = 0; i < x.length; i++) {
+        const xi = x[i];
+        out[i] = xi / (1 + Math.exp(-Math.max(-20, Math.min(20, xi))));
+    }
+    return out;
+}
+
+function add(a, b) {
+    const out = new Float32Array(a.length);
+    for (let i = 0; i < a.length; i++) out[i] = a[i] + b[i];
+    return out;
+}
+
+function mul(a, b) {
+    const out = new Float32Array(a.length);
+    for (let i = 0; i < a.length; i++) out[i] = a[i] * b[i];
+    return out;
+}
+
+function softmax(x, len) {
+    let mx = -Infinity;
+    for (let i = 0; i < len; i++) if (x[i] > mx) mx = x[i];
+    const out = new Float32Array(len);
+    let sum = 0;
+    for (let i = 0; i < len; i++) { out[i] = Math.exp(x[i] - mx); sum += out[i]; }
+    for (let i = 0; i < len; i++) out[i] /= sum;
+    return out;
+}
+
+function mhCausalAttention(q, k, v, T, hd) {
+    // q,k,v: [T, H*hd] = [T, E]
+    // Multi-head causal self-attention
+    const out = new Float32Array(T * H * hd);
+    const scale = 1 / Math.sqrt(hd);
+
+    for (let h = 0; h < H; h++) {
+        for (let t = 0; t < T; t++) {
+            // scores[t2] = q[t,h,:] · k[t2,h,:] / sqrt(hd) for t2 <= t
+            const scores = new Float32Array(t + 1);
+            for (let t2 = 0; t2 <= t; t2++) {
+                let dot = 0;
+                for (let d = 0; d < hd; d++) {
+                    dot += q[t * E + h * hd + d] * k[t2 * E + h * hd + d];
+                }
+                scores[t2] = dot * scale;
+            }
+
+            // Softmax over scores
+            const attn = softmax(scores, t + 1);
+
+            // Weighted sum of values
+            for (let d = 0; d < hd; d++) {
+                let val = 0;
+                for (let t2 = 0; t2 <= t; t2++) {
+                    val += attn[t2] * v[t2 * E + h * hd + d];
+                }
+                out[t * E + h * hd + d] = val;
+            }
+        }
+    }
+    return out;
+}
+
+// ── Model ────────────────────────────────────────────────────────────
+
+let model = null;
+
+async function loadModel() {
+    const status = document.getElementById('status');
+    try {
+        // Try loading from same directory, then from weights/
+        let resp;
+        for (const path of ['weights/hevlm.bin', './weights/hevlm.bin', '../weights/hevlm.bin', 'hevlm.bin']) {
+            try {
+                resp = await fetch(path);
+                if (resp.ok) break;
+            } catch(e) { continue; }
+        }
+        if (!resp || !resp.ok) {
+            throw new Error('Cannot find hevlm.bin weights file. Place it in weights/ directory.');
+        }
+
+        status.textContent = '⏳ Downloading weights...';
+        const buf = await resp.arrayBuffer();
+        status.textContent = '⏳ Parsing weights...';
+
+        model = parseWeights(buf);
+
+        status.textContent = '✅ Model loaded!';
+        status.className = 'status ready';
+        document.getElementById('generateBtn').disabled = false;
+        document.getElementById('output').innerHTML = '<span style="color:#34d399">Ready to generate Hebrew text.</span>';
+
+        // Stats
+        let totalParams = 0;
+        for (const w of model._allWeights) totalParams += w.length;
+        document.getElementById('statParams').textContent = (totalParams / 1e6).toFixed(2) + 'M';
+        document.getElementById('statWeightSize').textContent = (buf.byteLength / 1024).toFixed(0) + ' KB';
+        document.getElementById('statsArea').style.display = 'flex';
+
+    } catch(e) {
+        status.textContent = '❌ ' + e.message;
+        status.className = 'status error';
+        console.error(e);
+    }
+}
+
+function parseWeights(buf) {
+    // Binary format: [magic:u32][n:u32] then per tensor: [ndim:i32][shape:i32×ndim][data:f32×prod(shape)]
+    const view = new DataView(buf);
+    let off = 0;
+
+    const magic = view.getUint32(off, true); off += 4;
+    if (magic !== 0x4E544F52) throw new Error(`Bad magic: 0x${magic.toString(16)}`);
+    const n = view.getUint32(off, true); off += 4;
+
+    const tensors = [];
+    for (let i = 0; i < n; i++) {
+        const ndim = view.getInt32(off, true); off += 4;
+        const shape = [];
+        let total = 1;
+        for (let d = 0; d < ndim; d++) {
+            const s = view.getInt32(off, true); off += 4;
+            shape.push(s);
+            total *= s;
+        }
+        const data = new Float32Array(buf, off, total);
+        off += total * 4;
+        tensors.push({ shape, data: new Float32Array(data) }); // copy
+    }
+
+    // Parse into model structure
+    let idx = 0;
+    const wte = tensors[idx++].data;   // [V, E]
+    const wpe = tensors[idx++].data;   // [CTX, E]
+    const layers = [];
+    for (let l = 0; l < N_LAYERS; l++) {
+        layers.push({
+            rms1: tensors[idx++].data,     // [E]
+            wq: tensors[idx++].data,       // [E, E]
+            wk: tensors[idx++].data,       // [E, E]
+            wv: tensors[idx++].data,       // [E, E]
+            wo: tensors[idx++].data,       // [E, E]
+            rms2: tensors[idx++].data,     // [E]
+            w_gate: tensors[idx++].data,   // [FFN, E]
+            w_up: tensors[idx++].data,     // [FFN, E]
+            w_down: tensors[idx++].data,   // [E, FFN]
+        });
+    }
+    const rms_f = tensors[idx++].data;  // [E]
+    const head = tensors[idx++].data;   // [V, E]
+
+    return { wte, wpe, layers, rms_f, head, _allWeights: tensors.map(t => t.data) };
+}
+
+function forward(tokenIds) {
+    // tokenIds: array of byte values, length T
+    const T = tokenIds.length;
+
+    // Embedding: h[t] = wte[tok[t]] + wpe[t]
+    let h = new Float32Array(T * E);
+    for (let t = 0; t < T; t++) {
+        const tokId = tokenIds[t];
+        for (let i = 0; i < E; i++) {
+            h[t * E + i] = model.wte[tokId * E + i] + model.wpe[t * E + i];
+        }
+    }
+
+    // Transformer blocks
+    for (let l = 0; l < N_LAYERS; l++) {
+        const layer = model.layers[l];
+
+        // Attention
+        let xn = rmsnorm(h, layer.rms1, T, E);
+        // q = xn @ wq^T, etc. wq is [E, E], so wq^T access: wq[j*E+k]
+        let q = matmulT(xn, layer.wq, T, E, E);
+        let k = matmulT(xn, layer.wk, T, E, E);
+        let v = matmulT(xn, layer.wv, T, E, E);
+        let attn = mhCausalAttention(q, k, v, T, HD);
+        let proj = matmulT(attn, layer.wo, T, E, E);
+        h = add(h, proj);
+
+        // FFN
+        xn = rmsnorm(h, layer.rms2, T, E);
+        let gate = matmulT(xn, layer.w_gate, T, E, FFN);
+        let up = matmulT(xn, layer.w_up, T, E, FFN);
+        gate = silu(gate);
+        let ffn_h = mul(gate, up);
+        let down = matmulT(ffn_h, layer.w_down, T, FFN, E);
+        h = add(h, down);
+    }
+
+    // Final norm + head
+    h = rmsnorm(h, model.rms_f, T, E);
+    let logits = matmulT(h, model.head, T, E, V);  // [T, V]
+    return logits;
+}
+
+function sampleToken(logits, offset, temperature, topK) {
+    // logits at position offset (V values)
+    const scaled = new Float32Array(V);
+    for (let i = 0; i < V; i++) scaled[i] = logits[offset + i] / temperature;
+
+    // Top-k
+    if (topK > 0 && topK < V) {
+        const indexed = Array.from(scaled).map((v, i) => [v, i]);
+        indexed.sort((a, b) => b[0] - a[0]);
+        const topSet = new Set(indexed.slice(0, topK).map(x => x[1]));
+        for (let i = 0; i < V; i++) {
+            if (!topSet.has(i)) scaled[i] = -1e9;
+        }
+    }
+
+    const probs = softmax(scaled, V);
+
+    // Multinomial sample
+    const r = Math.random();
+    let cum = 0;
+    for (let i = 0; i < V; i++) {
+        cum += probs[i];
+        if (cum >= r) return i;
+    }
+    return V - 1;
+}
+
+async function generate() {
+    if (!model) return;
+
+    const btn = document.getElementById('generateBtn');
+    const output = document.getElementById('output');
+    btn.disabled = true;
+    btn.textContent = '⏳ Generating...';
+
+    const seedText = document.getElementById('seedInput').value || 'להרגיש';
+    const temperature = parseFloat(document.getElementById('tempSlider').value);
+    const topK = parseInt(document.getElementById('topkSlider').value);
+    const maxTokens = parseInt(document.getElementById('tokensSlider').value);
+
+    // Encode seed to UTF-8 bytes
+    const encoder = new TextEncoder();
+    const seedBytes = Array.from(encoder.encode(seedText));
+
+    output.innerHTML = '<span class="seed">' + escapeHtml(seedText) + '</span><span class="gen" id="genSpan"></span>';
+
+    // Use requestAnimationFrame for streaming output
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    const ctx = seedBytes.slice(0, CTX);
+    const generated = [];
+    const genSpan = document.getElementById('genSpan');
+
+    for (let step = 0; step < maxTokens && ctx.length < CTX; step++) {
+        // Forward pass
+        const logits = forward(ctx);
+
+        // Sample from last position
+        const lastOffset = (ctx.length - 1) * V;
+        const nextByte = sampleToken(logits, lastOffset, temperature, topK);
+
+        ctx.push(nextByte);
+        generated.push(nextByte);
+
+        // Decode and display every few steps
+        if (step % 3 === 0 || step === maxTokens - 1) {
+            const decoder = new TextDecoder('utf-8', { fatal: false });
+            const text = decoder.decode(new Uint8Array(generated));
+            genSpan.textContent = text;
+            await new Promise(resolve => setTimeout(resolve, 0));
+        }
+    }
+
+    // Final decode
+    const decoder = new TextDecoder('utf-8', { fatal: false });
+    const finalText = decoder.decode(new Uint8Array(generated));
+    genSpan.textContent = finalText;
+
+    btn.disabled = false;
+    btn.textContent = '✨ Generate';
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// ── UI bindings ──────────────────────────────────────────────────────
+
+document.getElementById('tempSlider').oninput = function() {
+    document.getElementById('tempVal').textContent = this.value;
+};
+document.getElementById('topkSlider').oninput = function() {
+    document.getElementById('topkVal').textContent = this.value;
+};
+document.getElementById('tokensSlider').oninput = function() {
+    document.getElementById('tokensVal').textContent = this.value;
+};
+
+// Ctrl+Enter to generate
+document.getElementById('seedInput').addEventListener('keydown', function(e) {
+    if (e.ctrlKey && e.key === 'Enter') generate();
+});
+
+// Load on page load
+loadModel();
+</script>
+</body>
+</html>
