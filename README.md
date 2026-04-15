@@ -1,9 +1,10 @@
 # Micro-Diffusion
 
-**Two neural architectures trained with [notorch](https://github.com/ariannamethod/notorch) + [Chuck optimizer](https://github.com/ariannamethod/chuck.optimizer). No PyTorch.**
+**Three neural architectures trained with [notorch](https://github.com/ariannamethod/notorch) + [Chuck optimizer](https://github.com/ariannamethod/chuck.optimizer). No PyTorch.**
 
 1. **HeVLM** — 1.12M param Hebrew character-level transformer (autoregressive)
 2. **Dracula Diffusion** — 3.74M param discrete masked diffusion on English text (bidirectional)
+3. **Hebrew Diffusion** — 1.78M param discrete masked diffusion on Hebrew text with MetaWeights (γ) guidance
 
 ---
 
@@ -83,6 +84,68 @@ Same architecture, same weights, same output:
 
 ---
 
+## Hebrew Diffusion — עברית מתגלה מהרעש
+
+**Discrete masked diffusion for Hebrew with MetaWeights (γ) guidance.** Same approach as Dracula Diffusion but with a unique twist: byte-frequency statistics from the Hebrew corpus guide the denoising process — a prior that pushes the model toward valid Hebrew byte patterns.
+
+|               | Value                |
+|---------------|----------------------|
+| **Parameters**| 1,783,200 (~1.78M)  |
+| **Architecture** | 4-layer Bidirectional Transformer |
+| **Embedding** | 160                  |
+| **Heads**     | 4 (head dim 40)      |
+| **FFN**       | 640                  |
+| **Context**   | 64 bytes             |
+| **Vocab**     | 256 (byte-level)     |
+| **Attention** | Bidirectional (no causal mask) |
+| **Diffusion** | Discrete masked, cosine schedule, T=1000 |
+| **Guidance**  | MetaWeights (γ) — corpus byte-frequency prior |
+| **Optimizer** | Chuck (self-aware Adam) |
+| **Framework** | notorch (pure C)     |
+| **Data**      | hevlm.txt (70KB, Hebrew poetry/body text) |
+
+### MetaWeights (γ) — Guidance Without a Classifier
+
+The formula `θ = ε + γ + αδ` gives us a framework where `γ` represents a prior. In Hebrew Diffusion, MetaWeights are byte-frequency log-probabilities computed from the training corpus. During denoising:
+
+```
+logits_guided[v] = logits[v] + γ × t_scale × log_freq[v]
+                                 ↑               ↑
+                        guidance strength    corpus byte frequency
+                    (scales with timestep)   (normalized [-1, 1])
+```
+
+At high noise (early denoising), guidance is strong — pushing toward common Hebrew bytes. As the text crystallizes, guidance fades to let the model's learned distribution dominate. This is analogous to classifier-free guidance in image diffusion, but driven by corpus statistics.
+
+### Quick Start
+
+```bash
+# Train
+python train_hebrew_diffusion.py
+# or: python train_hebrew_diffusion.py --steps 5000 --lr 3e-4 --threshold 2.5
+
+# Inference (C engine, zero numpy)
+python inference_hebrew_diffusion.py
+# or: python inference_hebrew_diffusion.py --steps 20 --temperature 0.8 --gamma 0.3
+
+# Inference (browser — open and watch Hebrew text appear)
+python -m http.server 8000
+# Open http://localhost:8000/inference_hebrew_diffusion.html
+
+# Tests
+python tests/test_hebrew_diffusion.py
+```
+
+### Inference Engines
+
+| Engine | Language | Dependencies | Notes |
+|--------|----------|--------------|-------|
+| `hebrew_diffusion_engine.c` | C | `-lm` only | Standalone or lib. Loads `.meta` for guidance. |
+| `inference_hebrew_diffusion.py` | Python | ctypes (stdlib) | Thin shim → C engine. **Zero numpy.** |
+| `inference_hebrew_diffusion.html` | JavaScript | None | Browser. RTL layout. Drag-drop weights + meta. |
+
+---
+
 ## HeVLM — Hebrew Vision Language Model
 
 **1.1M parameter transformer trained with [notorch](https://github.com/ariannamethod/notorch) + [Chuck optimizer](https://github.com/ariannamethod/chuck.optimizer). No PyTorch.**
@@ -153,6 +216,15 @@ python tests/test_model.py
 | `dracula.txt` | Dracula corpus (852KB, Bram Stoker) |
 | `weights/diffusion.bin` | Trained diffusion weights (after training) |
 | `tests/test_diffusion.py` | 12 tests: config, compilation, engine API, math |
+| **Hebrew Diffusion** | |
+| `ariannamethod/train_hebrew_diffusion.c` | Hebrew Diffusion training (bidirectional + MetaWeights + Chuck) |
+| `ariannamethod/hebrew_diffusion_engine.c` | Standalone C inference with MetaWeights guidance |
+| `train_hebrew_diffusion.py` | Python training script (builds and runs C) |
+| `inference_hebrew_diffusion.py` | Python inference (ctypes → C engine, zero numpy) |
+| `inference_hebrew_diffusion.html` | Browser inference with RTL Hebrew text revelation |
+| `weights/hebrew_diffusion.bin` | Trained Hebrew diffusion weights (after training) |
+| `weights/hebrew_diffusion.bin.meta` | MetaWeights (γ) byte-frequency guidance data |
+| `tests/test_hebrew_diffusion.py` | 13 tests: config, compilation, engine API, MetaWeights, Hebrew |
 | **HeVLM** | |
 | `ariannamethod/train_hevlm.c` | HeVLM training (causal transformer + Chuck) |
 | `ariannamethod/notorch_wrapper.py` | Python ctypes bindings + numpy inference |

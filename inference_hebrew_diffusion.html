@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hebrew Diffusion — עברית מתגלה מהרעש</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: 'Courier New', monospace;
+    background: #0a0a0f;
+    color: #e0e0e0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+.container { max-width: 900px; width: 100%; padding: 2rem; }
+h1 {
+    font-size: 1.8rem;
+    text-align: center;
+    margin-bottom: 0.3rem;
+    background: linear-gradient(135deg, #2563eb, #7c3aed);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+.subtitle {
+    text-align: center;
+    color: #888;
+    font-size: 0.85rem;
+    margin-bottom: 1.5rem;
+}
+.controls {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+    justify-content: center;
+}
+.controls label {
+    color: #aaa;
+    font-size: 0.8rem;
+}
+.controls input[type="range"],
+.controls input[type="number"] {
+    background: #1a1a2e;
+    border: 1px solid #333;
+    color: #e0e0e0;
+    padding: 0.3rem;
+    border-radius: 4px;
+    width: 80px;
+}
+button {
+    background: linear-gradient(135deg, #2563eb, #7c3aed);
+    color: white;
+    border: none;
+    padding: 0.6rem 1.5rem;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 1rem;
+    font-weight: bold;
+    transition: opacity 0.2s;
+}
+button:hover { opacity: 0.85; }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+.drop-zone {
+    border: 2px dashed #333;
+    border-radius: 8px;
+    padding: 1.5rem;
+    text-align: center;
+    color: #666;
+    margin-bottom: 1rem;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+.drop-zone:hover, .drop-zone.active {
+    border-color: #2563eb;
+    color: #2563eb;
+}
+.drop-zone.loaded {
+    border-color: #22c55e;
+    color: #22c55e;
+}
+.output-box {
+    background: #0d1117;
+    border: 1px solid #222;
+    border-radius: 8px;
+    padding: 1.5rem;
+    min-height: 200px;
+    font-size: 1.4rem;
+    line-height: 2;
+    text-align: right;
+    direction: rtl;
+    margin-bottom: 1rem;
+    overflow-wrap: break-word;
+    font-family: 'David', 'Noto Sans Hebrew', 'Courier New', monospace;
+}
+.output-box .mask { color: #333; }
+.output-box .revealed {
+    animation: reveal 0.3s ease-in;
+    color: #2563eb;
+}
+.output-box .settled { color: #e0e0e0; }
+@keyframes reveal {
+    from { color: #7c3aed; transform: scale(1.2); }
+    to { color: #2563eb; transform: scale(1); }
+}
+.progress {
+    height: 4px;
+    background: #1a1a2e;
+    border-radius: 2px;
+    margin-bottom: 0.5rem;
+    overflow: hidden;
+}
+.progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #2563eb, #7c3aed);
+    width: 0%;
+    transition: width 0.3s;
+}
+.stats {
+    color: #666;
+    font-size: 0.8rem;
+    text-align: center;
+    direction: ltr;
+}
+.info {
+    margin-top: 2rem;
+    padding: 1rem;
+    background: #111;
+    border-radius: 8px;
+    color: #888;
+    font-size: 0.8rem;
+    direction: ltr;
+    text-align: left;
+}
+.info code { color: #7c3aed; }
+</style>
+</head>
+<body>
+<div class="container">
+    <h1>עברית מתגלה מהרעש</h1>
+    <p class="subtitle">Hebrew Diffusion — Discrete Masked Diffusion with MetaWeights (γ) Guidance</p>
+
+    <div class="drop-zone" id="dropZone">
+        📂 Drop <code>hebrew_diffusion.bin</code> + <code>hebrew_diffusion.bin.meta</code> here<br>
+        <small>(or click to select)</small>
+        <input type="file" id="fileInput" multiple style="display:none" accept=".bin,.meta">
+    </div>
+
+    <div class="controls">
+        <div>
+            <label>Steps:</label>
+            <input type="number" id="steps" value="20" min="1" max="30">
+        </div>
+        <div>
+            <label>Temperature:</label>
+            <input type="range" id="temp" min="0.1" max="2.0" step="0.1" value="0.8">
+            <span id="tempVal">0.8</span>
+        </div>
+        <div>
+            <label>γ (guidance):</label>
+            <input type="range" id="gamma" min="0" max="1.0" step="0.05" value="0.3">
+            <span id="gammaVal">0.3</span>
+        </div>
+        <button id="runBtn" disabled>▶ Reveal — גלה</button>
+    </div>
+
+    <div class="progress"><div class="progress-bar" id="progressBar"></div></div>
+    <div class="output-box" id="output">Load weights to begin...</div>
+    <div class="stats" id="stats"></div>
+
+    <div class="info">
+        <strong>Hebrew Diffusion</strong> — ~1.78M params, 4-layer bidirectional transformer.<br>
+        V=256 (byte-level) · E=160 · H=4 · FFN=640 · CTX=64<br>
+        MetaWeights (γ): corpus byte-frequency statistics guide denoising toward valid Hebrew.<br>
+        <code>θ = ε + γ + αδ</code> — frequency prior as diffusion guidance.<br><br>
+        Text "crystallizes" from noise. Each step reveals more characters.
+        Higher γ = stronger bias toward common Hebrew byte patterns.
+    </div>
+</div>
+
+<script>
+// ── Config (must match hebrew_diffusion_engine.c) ──
+const H_V = 256, H_E = 160, H_H = 4, H_HD = 40, H_FFN = 640;
+const H_CTX = 64, H_N_LAYERS = 4, H_T_MAX = 1000, H_MASK = 0;
+const MAGIC = 0x4E544F52; // "NTOR"
+const META_MAGIC = 0x4D455441; // "META"
+
+let weights = null;
+let metaWeights = null;
+
+// ── Math ──
+function rmsnorm(x, gamma, n) {
+    let ss = 0;
+    for (let i = 0; i < n; i++) ss += x[i] * x[i];
+    ss = 1.0 / Math.sqrt(ss / n + 1e-6);
+    const out = new Float32Array(n);
+    for (let i = 0; i < n; i++) out[i] = x[i] * ss * gamma[i];
+    return out;
+}
+
+function silu(x) { return x / (1.0 + Math.exp(-x)); }
+
+function matvec(W, x, rows, cols) {
+    const out = new Float32Array(rows);
+    for (let r = 0; r < rows; r++) {
+        let s = 0;
+        const off = r * cols;
+        for (let c = 0; c < cols; c++) s += W[off + c] * x[c];
+        out[r] = s;
+    }
+    return out;
+}
+
+function sinusoidal_emb(t, dim) {
+    const out = new Float32Array(dim);
+    for (let i = 0; i < dim; i++) {
+        const freq = Math.exp(-Math.log(10000) * Math.floor(i / 2) * 2 / dim);
+        const val = t * freq;
+        out[i] = (i % 2 === 0) ? Math.sin(val) : Math.cos(val);
+    }
+    return out;
+}
+
+// ── Weight loading ──
+function loadWeights(buf) {
+    const view = new DataView(buf);
+    let off = 0;
+
+    const magic = view.getUint32(off, true); off += 4;
+    if (magic !== MAGIC) throw new Error(`Bad magic: 0x${magic.toString(16)}`);
+    const nTensors = view.getInt32(off, true); off += 4;
+    const expected = 2 + 2 + H_N_LAYERS * 9 + 2;
+    if (nTensors !== expected) throw new Error(`Expected ${expected} tensors, got ${nTensors}`);
+
+    function readTensor() {
+        const ndim = view.getInt32(off, true); off += 4;
+        let len = 1;
+        const shape = [];
+        for (let d = 0; d < ndim; d++) {
+            const s = view.getInt32(off, true); off += 4;
+            shape.push(s);
+            len *= s;
+        }
+        const data = new Float32Array(buf, off, len);
+        off += len * 4;
+        return { data: new Float32Array(data), shape, len };
+    }
+
+    const w = {};
+    w.wte = readTensor();
+    w.wpe = readTensor();
+    w.t_proj1 = readTensor();
+    w.t_proj2 = readTensor();
+    w.layers = [];
+    for (let l = 0; l < H_N_LAYERS; l++) {
+        const layer = {};
+        layer.rms1 = readTensor();
+        layer.wq = readTensor();
+        layer.wk = readTensor();
+        layer.wv = readTensor();
+        layer.wo = readTensor();
+        layer.rms2 = readTensor();
+        layer.w_gate = readTensor();
+        layer.w_up = readTensor();
+        layer.w_down = readTensor();
+        w.layers.push(layer);
+    }
+    w.rms_f = readTensor();
+    w.head = readTensor();
+    return w;
+}
+
+function loadMetaWeights(buf) {
+    const view = new DataView(buf);
+    const magic = view.getUint32(0, true);
+    if (magic !== META_MAGIC) return null;
+    const gamma = view.getFloat32(4, true);
+    const log_freq = new Float32Array(H_V);
+    for (let i = 0; i < H_V; i++) {
+        log_freq[i] = view.getFloat32(8 + i * 4, true);
+    }
+    return { gamma, log_freq };
+}
+
+// ── Forward pass ──
+function forward(w, tokens, t) {
+    // Token + position embedding
+    const h = new Float32Array(H_CTX * H_E);
+    for (let p = 0; p < H_CTX; p++) {
+        const tok = tokens[p];
+        for (let d = 0; d < H_E; d++)
+            h[p * H_E + d] = w.wte.data[tok * H_E + d] + w.wpe.data[p * H_E + d];
+    }
+
+    // Timestep embedding
+    const temb = sinusoidal_emb(t, H_E);
+    const temb_h = matvec(w.t_proj1.data, temb, H_E, H_E);
+    for (let d = 0; d < H_E; d++) temb_h[d] = silu(temb_h[d]);
+    const temb_out = matvec(w.t_proj2.data, temb_h, H_E, H_E);
+    for (let p = 0; p < H_CTX; p++)
+        for (let d = 0; d < H_E; d++)
+            h[p * H_E + d] += temb_out[d];
+
+    // Transformer layers
+    for (let l = 0; l < H_N_LAYERS; l++) {
+        const layer = w.layers[l];
+
+        // RMSNorm + QKV
+        const xn = new Float32Array(H_CTX * H_E);
+        const q = new Float32Array(H_CTX * H_E);
+        const k = new Float32Array(H_CTX * H_E);
+        const v = new Float32Array(H_CTX * H_E);
+        for (let p = 0; p < H_CTX; p++) {
+            const normed = rmsnorm(h.subarray(p * H_E, (p+1) * H_E), layer.rms1.data, H_E);
+            xn.set(normed, p * H_E);
+            q.set(matvec(layer.wq.data, normed, H_E, H_E), p * H_E);
+            k.set(matvec(layer.wk.data, normed, H_E, H_E), p * H_E);
+            v.set(matvec(layer.wv.data, normed, H_E, H_E), p * H_E);
+        }
+
+        // Bidirectional multi-head attention
+        const attn_out = new Float32Array(H_CTX * H_E);
+        const scale = 1.0 / Math.sqrt(H_HD);
+        for (let head = 0; head < H_H; head++) {
+            const ho = head * H_HD;
+            for (let i = 0; i < H_CTX; i++) {
+                const scores = new Float32Array(H_CTX);
+                let mx = -1e30;
+                for (let j = 0; j < H_CTX; j++) {
+                    let dot = 0;
+                    for (let d = 0; d < H_HD; d++)
+                        dot += q[i * H_E + ho + d] * k[j * H_E + ho + d];
+                    scores[j] = dot * scale;
+                    if (scores[j] > mx) mx = scores[j];
+                }
+                let sum = 0;
+                for (let j = 0; j < H_CTX; j++) { scores[j] = Math.exp(scores[j] - mx); sum += scores[j]; }
+                if (sum > 0) for (let j = 0; j < H_CTX; j++) scores[j] /= sum;
+
+                for (let d = 0; d < H_HD; d++) {
+                    let val = 0;
+                    for (let j = 0; j < H_CTX; j++) val += scores[j] * v[j * H_E + ho + d];
+                    attn_out[i * H_E + ho + d] = val;
+                }
+            }
+        }
+
+        // Output projection + residual
+        for (let p = 0; p < H_CTX; p++) {
+            const proj = matvec(layer.wo.data, attn_out.subarray(p * H_E, (p+1) * H_E), H_E, H_E);
+            for (let d = 0; d < H_E; d++) h[p * H_E + d] += proj[d];
+        }
+
+        // FFN
+        for (let p = 0; p < H_CTX; p++) {
+            const normed = rmsnorm(h.subarray(p * H_E, (p+1) * H_E), layer.rms2.data, H_E);
+            const gate = matvec(layer.w_gate.data, normed, H_FFN, H_E);
+            const up = matvec(layer.w_up.data, normed, H_FFN, H_E);
+            const mixed = new Float32Array(H_FFN);
+            for (let d = 0; d < H_FFN; d++) mixed[d] = silu(gate[d]) * up[d];
+            const down = matvec(layer.w_down.data, mixed, H_E, H_FFN);
+            for (let d = 0; d < H_E; d++) h[p * H_E + d] += down[d];
+        }
+    }
+
+    // Final norm + head
+    const logits = new Float32Array(H_CTX * H_V);
+    for (let p = 0; p < H_CTX; p++) {
+        const normed = rmsnorm(h.subarray(p * H_E, (p+1) * H_E), w.rms_f.data, H_E);
+        const l = matvec(w.head.data, normed, H_V, H_E);
+        logits.set(l, p * H_V);
+    }
+    return logits;
+}
+
+// ── Sampling ──
+function sampleToken(logits, temp, gamma, log_freq, t) {
+    // MetaWeights guidance
+    if (gamma > 0 && log_freq) {
+        const t_scale = t / H_T_MAX;
+        const g = gamma * t_scale;
+        for (let v = 0; v < H_V; v++) logits[v] += g * log_freq[v];
+    }
+
+    for (let v = 0; v < H_V; v++) logits[v] /= temp;
+    let mx = logits[0];
+    for (let v = 1; v < H_V; v++) if (logits[v] > mx) mx = logits[v];
+    let sum = 0;
+    for (let v = 0; v < H_V; v++) { logits[v] = Math.exp(logits[v] - mx); sum += logits[v]; }
+    if (sum > 0) for (let v = 0; v < H_V; v++) logits[v] /= sum;
+
+    let r = Math.random(), cum = 0, chosen = 0;
+    for (let v = 0; v < H_V; v++) { cum += logits[v]; if (cum >= r) { chosen = v; break; } }
+
+    if (chosen === H_MASK) {
+        let best = -1; chosen = 32;
+        for (let v = 1; v < H_V; v++) if (logits[v] > best) { best = logits[v]; chosen = v; }
+    }
+    return chosen;
+}
+
+// ── UTF-8 decode ──
+function tokensToString(tokens) {
+    const bytes = new Uint8Array(tokens.length);
+    for (let i = 0; i < tokens.length; i++) bytes[i] = tokens[i];
+    return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+}
+
+// ── UI ──
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+const runBtn = document.getElementById('runBtn');
+const output = document.getElementById('output');
+const stats = document.getElementById('stats');
+const progressBar = document.getElementById('progressBar');
+const tempSlider = document.getElementById('temp');
+const tempVal = document.getElementById('tempVal');
+const gammaSlider = document.getElementById('gamma');
+const gammaVal = document.getElementById('gammaVal');
+
+tempSlider.oninput = () => tempVal.textContent = tempSlider.value;
+gammaSlider.oninput = () => gammaVal.textContent = gammaSlider.value;
+
+dropZone.onclick = () => fileInput.click();
+dropZone.ondragover = (e) => { e.preventDefault(); dropZone.classList.add('active'); };
+dropZone.ondragleave = () => dropZone.classList.remove('active');
+
+function handleFiles(files) {
+    for (const file of files) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const buf = e.target.result;
+            if (file.name.endsWith('.meta')) {
+                metaWeights = loadMetaWeights(buf);
+                if (metaWeights) {
+                    gammaSlider.value = metaWeights.gamma;
+                    gammaVal.textContent = metaWeights.gamma.toFixed(2);
+                    console.log(`MetaWeights loaded: γ=${metaWeights.gamma}`);
+                }
+            } else {
+                try {
+                    weights = loadWeights(buf);
+                    dropZone.textContent = `✓ Loaded ${file.name} (${(buf.byteLength/1024/1024).toFixed(1)} MB)`;
+                    dropZone.classList.add('loaded');
+                    runBtn.disabled = false;
+                } catch (err) {
+                    dropZone.textContent = `✗ Error: ${err.message}`;
+                }
+            }
+        };
+        reader.readAsArrayBuffer(file);
+    }
+}
+
+dropZone.ondrop = (e) => { e.preventDefault(); dropZone.classList.remove('active'); handleFiles(e.dataTransfer.files); };
+fileInput.onchange = () => handleFiles(fileInput.files);
+
+async function runDenoise() {
+    if (!weights) return;
+    runBtn.disabled = true;
+
+    const nSteps = parseInt(document.getElementById('steps').value) || 20;
+    const temp = parseFloat(tempSlider.value) || 0.8;
+    const gamma = parseFloat(gammaSlider.value) || 0.3;
+    const log_freq = metaWeights ? metaWeights.log_freq : null;
+
+    // Start fully masked
+    const tokens = new Array(H_CTX).fill(H_MASK);
+    const prevTokens = new Array(H_CTX).fill(H_MASK);
+
+    output.innerHTML = renderTokens(tokens, prevTokens);
+    stats.textContent = `Step 0/${nSteps} — ${H_CTX} masked`;
+
+    for (let step = 0; step < nSteps; step++) {
+        // Copy previous state
+        for (let i = 0; i < H_CTX; i++) prevTokens[i] = tokens[i];
+
+        let t = H_T_MAX - Math.floor(step * H_T_MAX / nSteps);
+        if (t < 1) t = 1;
+
+        // Forward pass
+        const logits = forward(weights, tokens, t);
+
+        // Reveal
+        const reveal_prob = 1.0 / (nSteps - step);
+        for (let i = 0; i < H_CTX; i++) {
+            if (tokens[i] === H_MASK) {
+                if (Math.random() < reveal_prob || step === nSteps - 1) {
+                    const posLogits = new Float32Array(H_V);
+                    for (let v = 0; v < H_V; v++) posLogits[v] = logits[i * H_V + v];
+                    tokens[i] = sampleToken(posLogits, temp, gamma, log_freq, t);
+                }
+            }
+        }
+
+        const nMasked = tokens.filter(t => t === H_MASK).length;
+        progressBar.style.width = `${((step + 1) / nSteps * 100)}%`;
+        output.innerHTML = renderTokens(tokens, prevTokens);
+        stats.textContent = `Step ${step+1}/${nSteps} — t=${t} — ${nMasked} masked — γ=${gamma}`;
+
+        await new Promise(r => setTimeout(r, 200));
+    }
+
+    progressBar.style.width = '100%';
+    runBtn.disabled = false;
+}
+
+function renderTokens(tokens, prev) {
+    let html = '';
+    // Render as UTF-8 string with mask indicators
+    const bytes = [];
+    const classes = [];
+    for (let i = 0; i < H_CTX; i++) {
+        bytes.push(tokens[i]);
+        if (tokens[i] === H_MASK) classes.push('mask');
+        else if (prev[i] === H_MASK) classes.push('revealed');
+        else classes.push('settled');
+    }
+
+    // Decode UTF-8 and assign classes
+    for (let i = 0; i < H_CTX; i++) {
+        const b = bytes[i];
+        const cls = classes[i];
+        if (b === H_MASK) {
+            html += `<span class="${cls}">█</span>`;
+        } else if (b === 10) {
+            html += '<br>';
+        } else if (b >= 0x80) {
+            // Start of a UTF-8 multi-byte sequence or continuation
+            // For display, output raw byte and let browser handle UTF-8
+            const char = String.fromCharCode(b);
+            html += `<span class="${cls}">${char}</span>`;
+        } else {
+            const char = b >= 32 ? String.fromCharCode(b) : '·';
+            html += `<span class="${cls}">${char}</span>`;
+        }
+    }
+
+    // Also show decoded UTF-8 below
+    const decoded = tokensToString(tokens.map(t => t === H_MASK ? 0x20 : t));
+    html += `<br><br><small style="color:#666;direction:rtl">${decoded}</small>`;
+    return html;
+}
+
+runBtn.onclick = runDenoise;
+</script>
+</body>
+</html>

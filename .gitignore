@@ -1,9 +1,12 @@
 # Build artifacts
 ariannamethod/train_hevlm
 ariannamethod/train_diffusion
+ariannamethod/train_hebrew_diffusion
 ariannamethod/diffusion_engine
+ariannamethod/hebrew_diffusion_engine
 ariannamethod/libnotorch.so
 ariannamethod/libdiffusion.so
+ariannamethod/libhebdiffusion.so
 ariannamethod/*.o
 *.pyc
 __pycache__/
