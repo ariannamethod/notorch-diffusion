@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dracula Diffusion — Text Reveals From Noise</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: 'Courier New', monospace;
+    background: #0a0a0f;
+    color: #e0e0e0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+.container { max-width: 900px; width: 100%; padding: 2rem; }
+h1 {
+    font-size: 1.8rem;
+    text-align: center;
+    margin-bottom: 0.3rem;
+    background: linear-gradient(135deg, #dc2626, #7c3aed);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+.subtitle {
+    text-align: center;
+    color: #888;
+    font-size: 0.85rem;
+    margin-bottom: 2rem;
+}
+.subtitle a { color: #dc2626; text-decoration: none; }
+.card {
+    background: #141420;
+    border: 1px solid #2a2a3a;
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+}
+.card h2 {
+    font-size: 1rem;
+    color: #dc2626;
+    margin-bottom: 1rem;
+}
+label {
+    display: block; font-size: 0.85rem; color: #999; margin-bottom: 0.3rem;
+}
+input[type=text], input[type=number], input[type=range] {
+    width: 100%; background: #1a1a2e; border: 1px solid #333;
+    border-radius: 8px; padding: 0.6rem; color: #e0e0e0;
+    font-family: inherit; font-size: 0.95rem; margin-bottom: 0.8rem;
+}
+input[type=file] {
+    margin-bottom: 0.8rem;
+}
+.controls { display: flex; gap: 1rem; flex-wrap: wrap; align-items: end; }
+.controls > div { flex: 1; min-width: 100px; }
+button {
+    padding: 0.7rem 1.5rem;
+    border: none; border-radius: 8px;
+    font-weight: bold; cursor: pointer;
+    font-size: 0.95rem;
+    transition: all 0.2s;
+}
+.btn-primary {
+    background: linear-gradient(135deg, #dc2626, #7c3aed);
+    color: white;
+}
+.btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+.btn-secondary { background: #2a2a3a; color: #e0e0e0; }
+.btn-secondary:hover { background: #3a3a4a; }
+.output-area {
+    background: #0d0d15;
+    border: 1px solid #2a2a3a;
+    border-radius: 8px;
+    padding: 1rem;
+    font-size: 1.1rem;
+    line-height: 1.6;
+    min-height: 200px;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    position: relative;
+    overflow: hidden;
+}
+.char-mask { color: #333; }
+.char-reveal {
+    color: #dc2626;
+    animation: reveal 0.3s ease-out;
+}
+.char-done { color: #e0e0e0; }
+@keyframes reveal {
+    0% { color: #dc2626; text-shadow: 0 0 12px #dc2626; transform: scale(1.2); }
+    100% { color: #e0e0e0; text-shadow: none; transform: scale(1); }
+}
+.status {
+    text-align: center; color: #666; font-size: 0.85rem; margin-top: 1rem;
+}
+.progress-bar {
+    width: 100%; height: 4px; background: #1a1a2e;
+    border-radius: 2px; margin-top: 0.5rem; overflow: hidden;
+}
+.progress-fill {
+    height: 100%; background: linear-gradient(90deg, #dc2626, #7c3aed);
+    border-radius: 2px; transition: width 0.3s;
+    width: 0%;
+}
+.stats {
+    display: flex; gap: 2rem; justify-content: center;
+    margin-top: 1rem; color: #888; font-size: 0.8rem;
+}
+</style>
+</head>
+<body>
+<div class="container">
+    <h1>🧛 Dracula Diffusion</h1>
+    <p class="subtitle">
+        Discrete masked diffusion — text reveals from noise<br>
+        <a href="https://github.com/ariannamethod/Micro-Diffusion">notorch</a> •
+        bidirectional attention • ~3M params • pure C engine
+    </p>
+
+    <!-- Weight loading -->
+    <div class="card">
+        <h2>⚙️ Load Weights</h2>
+        <label>Load diffusion.bin weights file:</label>
+        <input type="file" id="weightFile" accept=".bin">
+        <div id="weightStatus" class="status">No weights loaded — using random init (demo mode)</div>
+    </div>
+
+    <!-- Controls -->
+    <div class="card">
+        <h2>🎛️ Controls</h2>
+        <div class="controls">
+            <div>
+                <label>Seed text (optional):</label>
+                <input type="text" id="seedText" placeholder="e.g. The Count">
+            </div>
+            <div>
+                <label>Steps: <span id="stepsVal">20</span></label>
+                <input type="range" id="steps" min="5" max="40" value="20"
+                    oninput="document.getElementById('stepsVal').textContent=this.value">
+            </div>
+            <div>
+                <label>Temperature: <span id="tempVal">0.80</span></label>
+                <input type="range" id="temperature" min="10" max="200" value="80"
+                    oninput="document.getElementById('tempVal').textContent=(this.value/100).toFixed(2)">
+            </div>
+        </div>
+        <div style="margin-top:1rem; display:flex; gap:1rem;">
+            <button class="btn-primary" id="btnGenerate" onclick="generate()">
+                🧛 Reveal Text
+            </button>
+            <button class="btn-secondary" onclick="reset()">Reset</button>
+        </div>
+    </div>
+
+    <!-- Output -->
+    <div class="card">
+        <h2>📜 Output</h2>
+        <div class="output-area" id="output">
+            Press "Reveal Text" to watch text crystallize from noise...
+        </div>
+        <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+        <div class="status" id="genStatus"></div>
+        <div class="stats">
+            <span id="statStep">Step: —</span>
+            <span id="statMasked">Masked: —</span>
+            <span id="statRevealed">Revealed: —</span>
+        </div>
+    </div>
+
+    <!-- Architecture info -->
+    <div class="card">
+        <h2>🏗️ Architecture</h2>
+        <pre style="color:#888; font-size:0.8rem;">
+Dracula Diffusion — Discrete Masked Diffusion Transformer
+
+V=256 (byte-level)  E=192  H=6  HD=32  FFN=768  CTX=128  L=6
+~3M parameters • Bidirectional attention (no causal mask)
+Cosine noise schedule • T_max=1000
+
+Forward:  clean text → mask X% tokens → predict originals
+Reverse:  fully masked → iterative denoise → coherent text
+
+Engine: notorch (pure C) + Chuck optimizer
+Data:   dracula.txt (852KB, Bram Stoker)
+
+θ = ε + γ + αδ
+        </pre>
+    </div>
+</div>
+
+<script>
+// ── Diffusion config ──
+const D_V = 256;
+const D_CTX = 128;
+const D_MASK = 0;
+const D_E = 192;
+const D_H = 6;
+const D_HD = D_E / D_H;
+const D_FFN = 768;
+const D_N_LAYERS = 6;
+const D_T_MAX = 1000;
+
+// ── Weight storage ──
+let weights = null;
+let isGenerating = false;
+
+// ── Math helpers ──
+function rmsnorm(x, gamma) {
+    const n = x.length;
+    let ss = 0;
+    for (let i = 0; i < n; i++) ss += x[i] * x[i];
+    ss = 1.0 / Math.sqrt(ss / n + 1e-6);
+    const out = new Float32Array(n);
+    for (let i = 0; i < n; i++) out[i] = x[i] * ss * gamma[i];
+    return out;
+}
+
+function silu(x) { return x / (1.0 + Math.exp(-x)); }
+
+function matvec(W, x, rows, cols) {
+    const out = new Float32Array(rows);
+    for (let r = 0; r < rows; r++) {
+        let s = 0;
+        const off = r * cols;
+        for (let c = 0; c < cols; c++) s += W[off + c] * x[c];
+        out[r] = s;
+    }
+    return out;
+}
+
+function sinusoidalEmb(t, dim) {
+    const out = new Float32Array(dim);
+    for (let i = 0; i < dim; i++) {
+        const freq = Math.exp(-Math.log(10000) * (Math.floor(i / 2) * 2) / dim);
+        const val = t * freq;
+        out[i] = (i % 2 === 0) ? Math.sin(val) : Math.cos(val);
+    }
+    return out;
+}
+
+function softmax(logits) {
+    let mx = logits[0];
+    for (let i = 1; i < logits.length; i++) if (logits[i] > mx) mx = logits[i];
+    let sum = 0;
+    const probs = new Float32Array(logits.length);
+    for (let i = 0; i < logits.length; i++) { probs[i] = Math.exp(logits[i] - mx); sum += probs[i]; }
+    if (sum > 0) for (let i = 0; i < logits.length; i++) probs[i] /= sum;
+    return probs;
+}
+
+function sampleFromLogits(logits, temperature) {
+    const scaled = new Float32Array(D_V);
+    for (let v = 0; v < D_V; v++) scaled[v] = logits[v] / temperature;
+    const probs = softmax(scaled);
+    let r = Math.random(), cum = 0, chosen = 0;
+    for (let v = 0; v < D_V; v++) { cum += probs[v]; if (cum >= r) { chosen = v; break; } }
+    if (chosen === D_MASK) {
+        let best = -1; chosen = 32;
+        for (let v = 1; v < D_V; v++) if (probs[v] > best) { best = probs[v]; chosen = v; }
+    }
+    return chosen;
+}
+
+// ── Forward pass ──
+function forwardPass(tokens, t) {
+    const w = weights;
+    // Token + position embedding
+    const h = new Float32Array(D_CTX * D_E);
+    for (let p = 0; p < D_CTX; p++) {
+        const tok = tokens[p];
+        for (let d = 0; d < D_E; d++)
+            h[p * D_E + d] = w.wte[tok * D_E + d] + w.wpe[p * D_E + d];
+    }
+
+    // Timestep embedding
+    const temb = sinusoidalEmb(t, D_E);
+    let temb_h = matvec(w.t_proj1, temb, D_E, D_E);
+    for (let d = 0; d < D_E; d++) temb_h[d] = silu(temb_h[d]);
+    const temb_out = matvec(w.t_proj2, temb_h, D_E, D_E);
+    for (let p = 0; p < D_CTX; p++)
+        for (let d = 0; d < D_E; d++)
+            h[p * D_E + d] += temb_out[d];
+
+    const xn = new Float32Array(D_CTX * D_E);
+    const q = new Float32Array(D_CTX * D_E);
+    const k = new Float32Array(D_CTX * D_E);
+    const v = new Float32Array(D_CTX * D_E);
+    const attn_out = new Float32Array(D_CTX * D_E);
+
+    // Transformer layers
+    for (let l = 0; l < D_N_LAYERS; l++) {
+        const ly = w.layers[l];
+        // RMSNorm + QKV
+        for (let p = 0; p < D_CTX; p++) {
+            const normed = rmsnorm(h.subarray(p * D_E, (p+1) * D_E), ly.rms1);
+            const qp = matvec(ly.wq, normed, D_E, D_E);
+            const kp = matvec(ly.wk, normed, D_E, D_E);
+            const vp = matvec(ly.wv, normed, D_E, D_E);
+            for (let d = 0; d < D_E; d++) {
+                xn[p*D_E+d] = normed[d];
+                q[p*D_E+d] = qp[d]; k[p*D_E+d] = kp[d]; v[p*D_E+d] = vp[d];
+            }
+        }
+
+        // Bidirectional multi-head attention
+        const scale = 1.0 / Math.sqrt(D_HD);
+        for (let head = 0; head < D_H; head++) {
+            const ho = head * D_HD;
+            for (let i = 0; i < D_CTX; i++) {
+                // Compute scores to ALL positions
+                const scores = new Float32Array(D_CTX);
+                let mx = -1e30;
+                for (let j = 0; j < D_CTX; j++) {
+                    let dot = 0;
+                    for (let d = 0; d < D_HD; d++)
+                        dot += q[i*D_E+ho+d] * k[j*D_E+ho+d];
+                    scores[j] = dot * scale;
+                    if (scores[j] > mx) mx = scores[j];
+                }
+                let sum = 0;
+                for (let j = 0; j < D_CTX; j++) { scores[j] = Math.exp(scores[j] - mx); sum += scores[j]; }
+                if (sum > 0) for (let j = 0; j < D_CTX; j++) scores[j] /= sum;
+                for (let d = 0; d < D_HD; d++) {
+                    let val = 0;
+                    for (let j = 0; j < D_CTX; j++) val += scores[j] * v[j*D_E+ho+d];
+                    attn_out[i*D_E+ho+d] = val;
+                }
+            }
+        }
+
+        // Output projection + residual
+        for (let p = 0; p < D_CTX; p++) {
+            const proj = matvec(ly.wo, attn_out.subarray(p*D_E, (p+1)*D_E), D_E, D_E);
+            for (let d = 0; d < D_E; d++) h[p*D_E+d] += proj[d];
+        }
+
+        // FFN
+        for (let p = 0; p < D_CTX; p++) {
+            const normed = rmsnorm(h.subarray(p*D_E, (p+1)*D_E), ly.rms2);
+            const gate = matvec(ly.w_gate, normed, D_FFN, D_E);
+            const up = matvec(ly.w_up, normed, D_FFN, D_E);
+            const ffn = new Float32Array(D_FFN);
+            for (let d = 0; d < D_FFN; d++) ffn[d] = silu(gate[d]) * up[d];
+            const down = matvec(ly.w_down, ffn, D_E, D_FFN);
+            for (let d = 0; d < D_E; d++) h[p*D_E+d] += down[d];
+        }
+    }
+
+    // Final norm + head
+    const logits = new Float32Array(D_CTX * D_V);
+    for (let p = 0; p < D_CTX; p++) {
+        const normed = rmsnorm(h.subarray(p*D_E, (p+1)*D_E), w.rms_f);
+        const out = matvec(w.head, normed, D_V, D_E);
+        for (let v = 0; v < D_V; v++) logits[p*D_V+v] = out[v];
+    }
+    return logits;
+}
+
+// ── Weight loading ──
+function loadWeightTensor(dv, offset) {
+    const ndim = dv.getInt32(offset, true); offset += 4;
+    const shape = [];
+    let len = 1;
+    for (let d = 0; d < ndim; d++) {
+        const s = dv.getInt32(offset, true); offset += 4;
+        shape.push(s);
+        len *= s;
+    }
+    const data = new Float32Array(len);
+    for (let i = 0; i < len; i++) {
+        data[i] = dv.getFloat32(offset, true); offset += 4;
+    }
+    return { data, shape, len, offset };
+}
+
+function loadWeights(buffer) {
+    const dv = new DataView(buffer);
+    const magic = dv.getUint32(0, true);
+    const n = dv.getInt32(4, true);
+
+    if (magic !== 0x4E544F52) {
+        alert('Invalid weight file (bad magic)');
+        return null;
+    }
+
+    let offset = 8;
+    const tensors = [];
+    for (let i = 0; i < n; i++) {
+        const result = loadWeightTensor(dv, offset);
+        offset = result.offset;
+        tensors.push(result.data);
+    }
+
+    // Parse into named weights
+    let idx = 0;
+    const w = {
+        wte: tensors[idx++],     // [V, E]
+        wpe: tensors[idx++],     // [CTX, E]
+        t_proj1: tensors[idx++], // [E, E]
+        t_proj2: tensors[idx++], // [E, E]
+        layers: [],
+        rms_f: null,
+        head: null,
+    };
+
+    for (let l = 0; l < D_N_LAYERS; l++) {
+        w.layers.push({
+            rms1: tensors[idx++],
+            wq: tensors[idx++], wk: tensors[idx++],
+            wv: tensors[idx++], wo: tensors[idx++],
+            rms2: tensors[idx++],
+            w_gate: tensors[idx++], w_up: tensors[idx++],
+            w_down: tensors[idx++],
+        });
+    }
+    w.rms_f = tensors[idx++];
+    w.head = tensors[idx++];
+
+    return w;
+}
+
+document.getElementById('weightFile').addEventListener('change', function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(ev) {
+        weights = loadWeights(ev.target.result);
+        if (weights) {
+            const nParams = weights.wte.length + weights.wpe.length + weights.t_proj1.length + weights.t_proj2.length
+                + weights.rms_f.length + weights.head.length
+                + weights.layers.reduce((s, l) => s + l.rms1.length + l.wq.length + l.wk.length
+                    + l.wv.length + l.wo.length + l.rms2.length
+                    + l.w_gate.length + l.w_up.length + l.w_down.length, 0);
+            document.getElementById('weightStatus').textContent =
+                `✓ Loaded ${(nParams/1e6).toFixed(2)}M parameters from ${file.name}`;
+            document.getElementById('weightStatus').style.color = '#4ade80';
+        }
+    };
+    reader.readAsArrayBuffer(file);
+});
+
+// ── Random init for demo ──
+function randomWeights() {
+    function randArr(n) {
+        const a = new Float32Array(n);
+        for (let i = 0; i < n; i++) a[i] = (Math.random() - 0.5) * 0.02;
+        return a;
+    }
+    function onesArr(n) {
+        const a = new Float32Array(n);
+        for (let i = 0; i < n; i++) a[i] = 1.0;
+        return a;
+    }
+    const w = {
+        wte: randArr(D_V * D_E),
+        wpe: randArr(D_CTX * D_E),
+        t_proj1: randArr(D_E * D_E),
+        t_proj2: randArr(D_E * D_E),
+        layers: [],
+        rms_f: onesArr(D_E),
+        head: randArr(D_V * D_E),
+    };
+    for (let l = 0; l < D_N_LAYERS; l++) {
+        w.layers.push({
+            rms1: onesArr(D_E), wq: randArr(D_E*D_E), wk: randArr(D_E*D_E),
+            wv: randArr(D_E*D_E), wo: randArr(D_E*D_E), rms2: onesArr(D_E),
+            w_gate: randArr(D_FFN*D_E), w_up: randArr(D_FFN*D_E),
+            w_down: randArr(D_E*D_FFN),
+        });
+    }
+    return w;
+}
+
+// ── Generation ──
+function tokenToChar(t) {
+    if (t === D_MASK) return '_';
+    if (t >= 32 && t < 127) return String.fromCharCode(t);
+    if (t === 10) return '\n';
+    return '.';
+}
+
+async function generate() {
+    if (isGenerating) return;
+    isGenerating = true;
+    const btn = document.getElementById('btnGenerate');
+    btn.disabled = true;
+    btn.textContent = '⏳ Denoising...';
+
+    if (!weights) weights = randomWeights();
+
+    const nSteps = parseInt(document.getElementById('steps').value);
+    const temp = parseInt(document.getElementById('temperature').value) / 100.0;
+    const seedText = document.getElementById('seedText').value;
+
+    // Initialize tokens
+    const tokens = new Int32Array(D_CTX);
+    for (let i = 0; i < D_CTX; i++) tokens[i] = D_MASK;
+    if (seedText) {
+        const bytes = new TextEncoder().encode(seedText);
+        const start = Math.floor((D_CTX - bytes.length) / 2);
+        for (let i = 0; i < Math.min(bytes.length, D_CTX); i++)
+            tokens[start + i] = bytes[i];
+    }
+
+    const prevState = new Int32Array(D_CTX);
+    const outputEl = document.getElementById('output');
+
+    for (let step = 0; step < nSteps; step++) {
+        // Copy current state
+        for (let i = 0; i < D_CTX; i++) prevState[i] = tokens[i];
+
+        const t = D_T_MAX - Math.floor(step * D_T_MAX / nSteps);
+
+        // Run forward pass
+        const logits = forwardPass(tokens, Math.max(t, 1));
+
+        // Reveal tokens
+        const revealProb = 1.0 / (nSteps - step);
+        for (let i = 0; i < D_CTX; i++) {
+            if (tokens[i] === D_MASK) {
+                if (Math.random() < revealProb || step === nSteps - 1) {
+                    const posLogits = new Float32Array(D_V);
+                    for (let v = 0; v < D_V; v++) posLogits[v] = logits[i * D_V + v];
+                    tokens[i] = sampleFromLogits(posLogits, temp);
+                }
+            }
+        }
+
+        // Render with animation
+        let html = '';
+        let nMasked = 0;
+        for (let i = 0; i < D_CTX; i++) {
+            const c = tokenToChar(tokens[i]);
+            const escaped = c.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+            if (tokens[i] === D_MASK) {
+                html += `<span class="char-mask">${escaped}</span>`;
+                nMasked++;
+            } else if (prevState[i] === D_MASK && tokens[i] !== D_MASK) {
+                html += `<span class="char-reveal">${escaped}</span>`;
+            } else {
+                html += `<span class="char-done">${escaped}</span>`;
+            }
+        }
+        outputEl.innerHTML = html;
+
+        // Update stats
+        const pct = ((step + 1) / nSteps * 100).toFixed(0);
+        document.getElementById('progressFill').style.width = pct + '%';
+        document.getElementById('statStep').textContent = `Step: ${step+1}/${nSteps}`;
+        document.getElementById('statMasked').textContent = `Masked: ${nMasked}`;
+        document.getElementById('statRevealed').textContent = `Revealed: ${D_CTX - nMasked}`;
+        document.getElementById('genStatus').textContent =
+            `Denoising step ${step+1}/${nSteps} (t=${Math.max(t,1)})`;
+
+        // Yield to browser for animation
+        await new Promise(r => setTimeout(r, 150));
+    }
+
+    document.getElementById('genStatus').textContent = 'Complete — text crystallized from noise';
+    btn.disabled = false;
+    btn.textContent = '🧛 Reveal Text';
+    isGenerating = false;
+}
+
+function reset() {
+    document.getElementById('output').textContent = 'Press "Reveal Text" to watch text crystallize from noise...';
+    document.getElementById('progressFill').style.width = '0%';
+    document.getElementById('genStatus').textContent = '';
+    document.getElementById('statStep').textContent = 'Step: —';
+    document.getElementById('statMasked').textContent = 'Masked: —';
+    document.getElementById('statRevealed').textContent = 'Revealed: —';
+}
+</script>
+</body>
+</html>

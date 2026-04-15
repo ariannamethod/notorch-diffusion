@@ -1,4 +1,89 @@
-# HeVLM — Hebrew Vision Language Model
+# Micro-Diffusion
+
+**Two neural architectures trained with [notorch](https://github.com/ariannamethod/notorch) + [Chuck optimizer](https://github.com/ariannamethod/chuck.optimizer). No PyTorch.**
+
+1. **HeVLM** — 1.12M param Hebrew character-level transformer (autoregressive)
+2. **Dracula Diffusion** — 3.74M param discrete masked diffusion on English text (bidirectional)
+
+---
+
+## Dracula Diffusion — Text Reveals From Noise
+
+**Discrete masked diffusion transformer.** Text "crystallizes" from noise through iterative denoising — like a photograph developing. Not left-to-right generation. The entire text appears in parallel.
+
+|               | Value                |
+|---------------|----------------------|
+| **Parameters**| 3,738,048 (~3.74M)  |
+| **Architecture** | 6-layer Bidirectional Transformer |
+| **Embedding** | 192                  |
+| **Heads**     | 6 (head dim 32)      |
+| **FFN**       | 768                  |
+| **Context**   | 128 bytes            |
+| **Vocab**     | 256 (byte-level)     |
+| **Attention** | Bidirectional (no causal mask) |
+| **Diffusion** | Discrete masked, cosine schedule, T=1000 |
+| **Optimizer** | Chuck (self-aware Adam) |
+| **Framework** | notorch (pure C)     |
+| **Data**      | dracula.txt (852KB, Bram Stoker) |
+
+### How It Works
+
+```
+Forward (corruption):   clean text → randomly mask X% of tokens → [MASK][MASK]he[MASK]oun[MASK]
+                        X% determined by cosine schedule at timestep t
+
+Reverse (denoising):    model sees masked text → predicts original token at each [MASK]
+                        bidirectional attention: every token sees ALL other tokens
+
+Training:  random t ∈ [1, 1000] → mask at rate β(t) → cross-entropy on masked positions
+
+Inference: start fully [MASK]ed → denoise in 20 steps → text crystallizes
+           step 1:  ____________________
+           step 5:  __e C__nt __d ____
+           step 10: The Count had ____
+           step 20: The Count had risen
+```
+
+### Quick Start
+
+```bash
+# Train
+python train_diffusion.py
+# or: python train_diffusion.py --steps 5000 --lr 3e-4 --threshold 2.5
+
+# Inference (C engine, zero numpy)
+python inference_diffusion.py
+# or: python inference_diffusion.py --seed "The Count" --steps 20 --temperature 0.8
+
+# Inference (browser — open and watch text appear)
+python -m http.server 8000
+# Open http://localhost:8000/inference_diffusion.html
+
+# Run tests
+python tests/test_diffusion.py
+```
+
+### Why Diffusion > Autoregressive
+
+1. **Bidirectional context** — every token sees left AND right (AR only sees left)
+2. **Parallel generation** — entire text at once, not one token at a time
+3. **Visually compelling** — text crystallizes like a developing photograph
+4. **Q-compatible** — MetaWeights from Q/heblm can guide denoising as a signal
+5. **RRPRAM-ready** — position-aware attention helps decide *which* positions to reveal first
+
+### Inference: Three Engines
+
+Same architecture, same weights, same output:
+
+| Engine | Language | Dependencies | Notes |
+|--------|----------|--------------|-------|
+| `diffusion_engine.c` | C | `-lm` only | Standalone binary or shared library |
+| `inference_diffusion.py` | Python | ctypes (stdlib) | Thin shim → calls C engine. **Zero numpy.** |
+| `inference_diffusion.html` | JavaScript | None | Browser. Drag-drop weights. Watch text appear. |
+
+---
+
+## HeVLM — Hebrew Vision Language Model
 
 **1.1M parameter transformer trained with [notorch](https://github.com/ariannamethod/notorch) + [Chuck optimizer](https://github.com/ariannamethod/chuck.optimizer). No PyTorch.**
 
@@ -59,17 +144,28 @@ python tests/test_model.py
 
 | File | Description |
 |------|-------------|
-| `ariannamethod/notorch.c` | notorch — neural network library in pure C |
-| `ariannamethod/notorch.h` | notorch header |
-| `ariannamethod/train_hevlm.c` | C training program (transformer + Chuck optimizer) |
-| `ariannamethod/Makefile` | Build system |
+| **Diffusion** | |
+| `ariannamethod/train_diffusion.c` | Dracula Diffusion training (bidirectional transformer + Chuck) |
+| `ariannamethod/diffusion_engine.c` | Standalone C inference engine (no notorch dep) |
+| `train_diffusion.py` | Python training script (builds and runs C) |
+| `inference_diffusion.py` | Python inference (ctypes → C engine, zero numpy) |
+| `inference_diffusion.html` | Browser inference with text revelation animation |
+| `dracula.txt` | Dracula corpus (852KB, Bram Stoker) |
+| `weights/diffusion.bin` | Trained diffusion weights (after training) |
+| `tests/test_diffusion.py` | 12 tests: config, compilation, engine API, math |
+| **HeVLM** | |
+| `ariannamethod/train_hevlm.c` | HeVLM training (causal transformer + Chuck) |
 | `ariannamethod/notorch_wrapper.py` | Python ctypes bindings + numpy inference |
 | `train.py` | Python training script (builds and runs C) |
 | `inference.py` | Python inference script |
-| `inference.html` | Browser inference (JavaScript, same architecture) |
-| `hevlm.txt` | Hebrew training corpus (~70KB, 2500 lines) |
-| `weights/hevlm.bin` | Trained weights (4.3MB) |
+| `inference.html` | Browser inference (JavaScript) |
+| `hevlm.txt` | Hebrew training corpus (~70KB) |
+| `weights/hevlm.bin` | Trained HeVLM weights (4.3MB) |
 | `tests/test_model.py` | 14 tests: weights, forward pass, generation |
+| **Core** | |
+| `ariannamethod/notorch.c` | notorch — neural network library in pure C |
+| `ariannamethod/notorch.h` | notorch header (includes bidirectional attention op) |
+| `ariannamethod/Makefile` | Build system |
 
 ## Architecture
 
@@ -163,7 +259,7 @@ reduction: 78.7%
 [notorch](https://github.com/ariannamethod/notorch) is a PyTorch replacement in pure C. It provides:
 - Tensors with reference counting
 - Autograd tape (reverse-mode automatic differentiation)
-- Forward ops: embedding, linear, RMSNorm, multi-head attention, SiLU, GELU, cross-entropy
+- Forward ops: embedding, linear, RMSNorm, multi-head attention (causal + **bidirectional**), SiLU, GELU, cross-entropy
 - Optimizers: Adam, AdamW, **Chuck** (self-aware Adam with 9 levels of awareness)
 - LR schedules: cosine annealing, step decay, linear
 - NaN guard with dynamic loss scaling
