@@ -1,4 +1,6 @@
-# Micro-Diffusion
+# notorch-diffusion
+
+*Originally forked from [StarShiny0325/Micro-Diffusion](https://github.com/StarShiny0325/Micro-Diffusion). Rebuilt on notorch — no PyTorch.*
 
 **Three neural architectures trained with [notorch](https://github.com/ariannamethod/notorch) + [Chuck optimizer](https://github.com/ariannamethod/chuck.optimizer). No PyTorch.**
 
