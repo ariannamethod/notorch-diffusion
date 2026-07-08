@@ -104,28 +104,37 @@ static void sinusoidal_embedding(float* out, int t, int dim) {
 static int load_mat(FILE* f, Mat* m) {
     int32_t ndim;
     if (fread(&ndim, 4, 1, f) != 1) return -1;
+    if (ndim < 1 || ndim > 8) return -1;              /* ndim from file → guard shape[8] (stack overflow on corrupt/crafted input) */
     int32_t shape[8];
     if (fread(shape, 4, ndim, f) != (size_t)ndim) return -1;
-    int len = 1;
-    for (int d = 0; d < ndim; d++) len *= shape[d];
-    m->data = (float*)malloc(len * sizeof(float));
+    long len = 1;
+    for (int d = 0; d < ndim; d++) {
+        if (shape[d] <= 0 || shape[d] > (1 << 24)) return -1;   /* per-dim sanity → no negative/overflow */
+        len *= shape[d];
+    }
+    if (len > (1 << 28)) return -1;                   /* 256M-float cap: reject overflowed/absurd len */
+    m->data = (float*)malloc((size_t)len * sizeof(float));
     if (!m->data) return -1;
-    if (fread(m->data, 4, len, f) != (size_t)len) return -1;
+    if (fread(m->data, 4, (size_t)len, f) != (size_t)len) { free(m->data); return -1; }
     m->rows = ndim >= 2 ? shape[0] : 1;
     m->cols = ndim >= 2 ? shape[1] : shape[0];
-    m->len = len;
+    m->len = (int)len;
     return 0;
 }
 
 static int load_vec(FILE* f, float* dst, int expected_len) {
     int32_t ndim;
     if (fread(&ndim, 4, 1, f) != 1) return -1;
+    if (ndim < 1 || ndim > 8) return -1;              /* ndim from file → guard shape[8] */
     int32_t shape[8];
     if (fread(shape, 4, ndim, f) != (size_t)ndim) return -1;
-    int len = 1;
-    for (int d = 0; d < ndim; d++) len *= shape[d];
+    long len = 1;
+    for (int d = 0; d < ndim; d++) {
+        if (shape[d] <= 0) return -1;
+        len *= shape[d];
+    }
     if (len != expected_len) return -1;
-    if (fread(dst, 4, len, f) != (size_t)len) return -1;
+    if (fread(dst, 4, (size_t)len, f) != (size_t)len) return -1;
     return 0;
 }
 
