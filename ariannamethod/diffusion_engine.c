@@ -212,7 +212,7 @@ static void forward_pass(DiffWeights* w, int* tokens, int t, float* logits_out) 
     /* Add timestep to all positions */
     for (int p = 0; p < D_CTX; p++)
         for (int d = 0; d < D_E; d++)
-            s->h[p * D_E + d] += temb_out[d];
+            s->h[p * D_E + d] += temb_out[d] * 0.1f;  /* damp t-emb (sync with train_diffusion, Fable §4) */
 
     /* Transformer blocks */
     for (int l = 0; l < D_N_LAYERS; l++) {

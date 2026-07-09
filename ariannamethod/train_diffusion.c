@@ -204,7 +204,7 @@ static int diff_forward(DiffModel* m, int* noisy_tokens, int* target_tokens, int
     float* temb_data = tape->entries[temb_h].output->data;
     for (int p = 0; p < D_CTX; p++)
         for (int d = 0; d < D_E; d++)
-            temb_bc->data[p * D_E + d] = temb_data[d];
+            temb_bc->data[p * D_E + d] = temb_data[d] * 0.1f;  /* damp t-emb (Fable §4: full strength drowns identity) */
     int temb_bc_i = nt_tape_record(temb_bc, NT_OP_NONE, -1, -1, 0);
     nt_tensor_free(temb_bc);
 
@@ -242,7 +242,7 @@ static int diff_forward(DiffModel* m, int* noisy_tokens, int* target_tokens, int
             mask_tgt->data[i] = (float)target_tokens[i];
             n_masked++;
         } else {
-            mask_tgt->data[i] = (float)noisy_tokens[i]; /* predict itself = zero loss */
+            mask_tgt->data[i] = -1.0f; /* ignore-index: masked-only loss (Fable §2 — no copy-target dilution) */
         }
     }
     int mask_tgt_i = nt_tape_record(mask_tgt, NT_OP_NONE, -1, -1, 0);

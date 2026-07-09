@@ -968,10 +968,14 @@ void nt_tape_backward(int loss_idx) {
                 int V = (int)e->aux2;
                 float* dl = (float*)calloc(T * V, sizeof(float));
                 if (dl && pt) {
+                    int n_valid = 0;
+                    for (int t = 0; t < T; t++) if ((int)pt->output->data[t] >= 0) n_valid++;
+                    if (n_valid == 0) n_valid = 1;
                     for (int t = 0; t < T; t++) {
-                        float* logits_t = pl->output->data + t * V;
                         int target = (int)pt->output->data[t];
-                        if (target < 0 || target >= V) target = 0;
+                        if (target < 0) continue;          /* ignore-index: zero grad here (dl is calloc'd) */
+                        if (target >= V) target = 0;
+                        float* logits_t = pl->output->data + t * V;
                         float mx = logits_t[0];
                         for (int j = 1; j < V; j++)
                             if (logits_t[j] > mx) mx = logits_t[j];
@@ -982,7 +986,7 @@ void nt_tape_backward(int loss_idx) {
                         }
                         for (int j = 0; j < V; j++) dl[t * V + j] /= sum;
                         dl[t * V + target] -= 1.0f;
-                        float s = dout[0] / T;
+                        float s = dout[0] / n_valid;
                         for (int j = 0; j < V; j++) dl[t * V + j] *= s;
                     }
                     tape_acc_grad(e->parent1, dl, T * V);
@@ -2158,17 +2162,20 @@ int nt_seq_cross_entropy(int logits_idx, int targets_idx, int T, int V) {
     nt_tensor* out = nt_tensor_new(1);
     if (!out) return -1;
     float total_loss = 0;
+    int n_valid = 0;
     for (int t = 0; t < T; t++) {
-        float* logits_t = pl->output->data + t * V;
         int target = (int)pt->output->data[t];
-        if (target < 0 || target >= V) target = 0;
+        if (target < 0) continue;              /* ignore-index: masked-only loss (skip copy positions) */
+        if (target >= V) target = 0;
+        float* logits_t = pl->output->data + t * V;
         float mx = logits_t[0];
         for (int j = 1; j < V; j++) if (logits_t[j] > mx) mx = logits_t[j];
         float sum = 0;
         for (int j = 0; j < V; j++) sum += expf(logits_t[j] - mx);
         total_loss += -(logits_t[target] - mx - logf(sum));
+        n_valid++;
     }
-    out->data[0] = total_loss / T;
+    out->data[0] = total_loss / (n_valid > 0 ? n_valid : 1);
     int idx = nt_tape_record3(out, NT_OP_SEQ_CROSSENT, logits_idx, targets_idx, -1, (float)T, (float)V);
     nt_tensor_free(out);
     return idx;
