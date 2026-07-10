@@ -1361,6 +1361,12 @@ static float chuck_randn(void) {
 
 // Synced with PyTorch chuck.py (iamolegataeff/chuck.optimizer) 2026-04-06
 // θ -= (α × S × λ × λ_l) × m̂/(√v̂ + ε) + η
+/* Permanent-freeze toggle (default 1 = legacy behavior). Set 0 to disable the
+ * Level-2 hard freeze — deep-residual models freeze attention/wpe/wte at init
+ * (Fable audit 2026-07-10, TODO chuck_freeze_scale_aware). Canonical scale-aware
+ * fix + unfreeze path is separate. */
+int nt_chuck_freeze_enable = 1;
+
 void nt_tape_chuck_step(float lr, float loss_val) {
     float beta1 = 0.9f, beta2 = 0.999f, eps = 1e-8f;
 
@@ -1472,7 +1478,7 @@ void nt_tape_chuck_step(float lr, float loss_val) {
                 if (gtrend > 0.05f)  cp->dampen *= NT_CHUCK_DAMP_UP;   // grad rising → boost
                 if (gtrend < -0.05f) cp->dampen *= NT_CHUCK_DAMP_DOWN;  // grad settling → ease
             }
-            if (gnorm < NT_CHUCK_FREEZE_THRESH) {
+            if (nt_chuck_freeze_enable && gnorm < NT_CHUCK_FREEZE_THRESH) {
                 cp->stag++;
                 if (cp->stag >= NT_CHUCK_STAG_STEPS) cp->frozen = 1;
             } else {

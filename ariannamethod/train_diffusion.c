@@ -429,6 +429,10 @@ int main(int argc, char** argv) {
     /* Create model */
     nt_seed(42);
     srand(42);
+    /* Disable Chuck hard-freeze: deep-residual init (wo×0.058) gives attn/wpe/wte
+     * tiny gradient norms early → permanent freeze at random weights (Fable audit
+     * 2026-07-10). Model must stay trainable to learn context. */
+    nt_chuck_freeze_enable = 0;
     DiffModel* model = diff_model_create();
     long np = diff_count_params(model);
     printf("model: %ld params (%.2f MB, %.2fM)\n", np, np * 4.0f / 1048576.0f, np / 1e6f);
@@ -468,10 +472,14 @@ int main(int argc, char** argv) {
         int loss_idx = diff_forward(model, noisy, clean, t);
         float loss_val = nt_tape_get()->entries[loss_idx].output->data[0];
 
-        if (step == 0) { first_loss = loss_val; loss_ema = loss_val; }
         last_loss = loss_val;
-        loss_ema = 0.99f * loss_ema + 0.01f * loss_val;
-        if (loss_val < best_loss) best_loss = loss_val;
+        /* Skip mask=0% steps (n_valid=0 → loss 0.0000) from ema/best — honest curve */
+        if (loss_val > 0.0f) {
+            if (first_loss == 0.0f) first_loss = loss_val;
+            if (loss_ema  == 0.0f) loss_ema  = loss_val;
+            loss_ema = 0.99f * loss_ema + 0.01f * loss_val;
+            if (loss_val < best_loss) best_loss = loss_val;
+        }
 
         nt_tape_backward(loss_idx);
 

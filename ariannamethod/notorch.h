@@ -150,6 +150,7 @@ typedef struct {
 #define NT_CHUCK_NOISE_MAG   0.001f
 #define NT_CHUCK_NOISE_DECAY 0.9f     // exponential noise decay per step
 #define NT_CHUCK_FREEZE_THRESH 0.01f
+extern int nt_chuck_freeze_enable;   /* 1=legacy hard-freeze; 0=disabled (deep-residual safe) */
 #define NT_CHUCK_MACRO_INT   1000     // was 500, PyTorch = 1000
 #define NT_CHUCK_MACRO_PAT   3
 #define NT_CHUCK_MACRO_DECAY 0.5f
