@@ -177,7 +177,7 @@ button {
         <pre style="color:#888; font-size:0.8rem;">
 Dracula Diffusion — Discrete Masked Diffusion Transformer
 
-V=256 (byte-level)  E=192  H=6  HD=32  FFN=768  CTX=128  L=6
+V=256 (byte-level)  E=288  H=6  HD=48  FFN=1152  CTX=128  L=6
 ~3M parameters • Bidirectional attention (no causal mask)
 Cosine noise schedule • T_max=1000
 
@@ -197,10 +197,10 @@ Data:   dracula.txt (852KB, Bram Stoker)
 const D_V = 256;
 const D_CTX = 128;
 const D_MASK = 0;
-const D_E = 192;
+const D_E = 288;
 const D_H = 6;
 const D_HD = D_E / D_H;
-const D_FFN = 768;
+const D_FFN = 1152;
 const D_N_LAYERS = 6;
 const D_T_MAX = 1000;
 

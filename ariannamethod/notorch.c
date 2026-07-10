@@ -968,10 +968,14 @@ void nt_tape_backward(int loss_idx) {
                 int V = (int)e->aux2;
                 float* dl = (float*)calloc(T * V, sizeof(float));
                 if (dl && pt) {
+                    int n_valid = 0;
+                    for (int t = 0; t < T; t++) if ((int)pt->output->data[t] >= 0) n_valid++;
+                    if (n_valid == 0) n_valid = 1;
                     for (int t = 0; t < T; t++) {
-                        float* logits_t = pl->output->data + t * V;
                         int target = (int)pt->output->data[t];
-                        if (target < 0 || target >= V) target = 0;
+                        if (target < 0) continue;          /* ignore-index: zero grad here (dl is calloc'd) */
+                        if (target >= V) target = 0;
+                        float* logits_t = pl->output->data + t * V;
                         float mx = logits_t[0];
                         for (int j = 1; j < V; j++)
                             if (logits_t[j] > mx) mx = logits_t[j];
@@ -982,7 +986,7 @@ void nt_tape_backward(int loss_idx) {
                         }
                         for (int j = 0; j < V; j++) dl[t * V + j] /= sum;
                         dl[t * V + target] -= 1.0f;
-                        float s = dout[0] / T;
+                        float s = dout[0] / n_valid;
                         for (int j = 0; j < V; j++) dl[t * V + j] *= s;
                     }
                     tape_acc_grad(e->parent1, dl, T * V);
@@ -2158,17 +2162,20 @@ int nt_seq_cross_entropy(int logits_idx, int targets_idx, int T, int V) {
     nt_tensor* out = nt_tensor_new(1);
     if (!out) return -1;
     float total_loss = 0;
+    int n_valid = 0;
     for (int t = 0; t < T; t++) {
-        float* logits_t = pl->output->data + t * V;
         int target = (int)pt->output->data[t];
-        if (target < 0 || target >= V) target = 0;
+        if (target < 0) continue;              /* ignore-index: masked-only loss (skip copy positions) */
+        if (target >= V) target = 0;
+        float* logits_t = pl->output->data + t * V;
         float mx = logits_t[0];
         for (int j = 1; j < V; j++) if (logits_t[j] > mx) mx = logits_t[j];
         float sum = 0;
         for (int j = 0; j < V; j++) sum += expf(logits_t[j] - mx);
         total_loss += -(logits_t[target] - mx - logf(sum));
+        n_valid++;
     }
-    out->data[0] = total_loss / T;
+    out->data[0] = total_loss / (n_valid > 0 ? n_valid : 1);
     int idx = nt_tape_record3(out, NT_OP_SEQ_CROSSENT, logits_idx, targets_idx, -1, (float)T, (float)V);
     nt_tensor_free(out);
     return idx;
@@ -2491,6 +2498,76 @@ void nt_bpe_free(nt_bpe* bpe) {
     free(bpe->merge_b);
     free(bpe->merge_result);
     free(bpe);
+}
+
+// ── Integer BPE (byte-base, "id_a id_b" merges → 256+i) ──────────────────────
+nt_bpe_int* nt_bpe_int_load(const char* merges_file) {
+    FILE* f = fopen(merges_file, "r");
+    if (!f) return NULL;
+    nt_bpe_int* b = (nt_bpe_int*)calloc(1, sizeof(nt_bpe_int));
+    if (!b) { fclose(f); return NULL; }
+    b->merge_a = (int*)malloc(NT_BPE_MAX_MERGES * sizeof(int));
+    b->merge_b = (int*)malloc(NT_BPE_MAX_MERGES * sizeof(int));
+    if (!b->merge_a || !b->merge_b) { nt_bpe_int_free(b); fclose(f); return NULL; }
+    char line[128];
+    while (fgets(line, sizeof(line), f) && b->n_merges < NT_BPE_MAX_MERGES) {
+        int a, bb;
+        if (sscanf(line, "%d %d", &a, &bb) != 2) continue;
+        b->merge_a[b->n_merges] = a;
+        b->merge_b[b->n_merges] = bb;
+        b->n_merges++;
+    }
+    fclose(f);
+    b->vocab = 256 + b->n_merges;
+    return b;
+}
+
+int nt_bpe_int_encode(const nt_bpe_int* b, const unsigned char* bytes, int n_bytes,
+                      int* out_ids, int max_ids) {
+    if (!b || !bytes || !out_ids || max_ids <= 0) return 0;
+    int n = n_bytes < max_ids ? n_bytes : max_ids;
+    for (int i = 0; i < n; i++) out_ids[i] = (int)bytes[i];   // base = byte ids
+    // Apply merges in learned order; each pass rewrites in place, compacting.
+    for (int m = 0; m < b->n_merges; m++) {
+        int a = b->merge_a[m], bb = b->merge_b[m], res = 256 + m;
+        int w = 0;
+        for (int r = 0; r < n; ) {
+            if (r < n - 1 && out_ids[r] == a && out_ids[r + 1] == bb) {
+                out_ids[w++] = res; r += 2;
+            } else {
+                out_ids[w++] = out_ids[r]; r += 1;
+            }
+        }
+        n = w;
+    }
+    return n;
+}
+
+static int nt__bpe_int_expand(const nt_bpe_int* b, int id,
+                              unsigned char* out, int max_out, int pos) {
+    if (pos >= max_out) return pos;
+    if (id < 256) { out[pos++] = (unsigned char)id; return pos; }
+    int m = id - 256;
+    if (m < 0 || m >= b->n_merges) return pos;   // invalid id → skip
+    pos = nt__bpe_int_expand(b, b->merge_a[m], out, max_out, pos);
+    pos = nt__bpe_int_expand(b, b->merge_b[m], out, max_out, pos);
+    return pos;
+}
+
+int nt_bpe_int_decode(const nt_bpe_int* b, const int* ids, int n_ids,
+                      unsigned char* out, int max_out) {
+    if (!b || !ids || !out || max_out <= 0) return 0;
+    int pos = 0;
+    for (int i = 0; i < n_ids && pos < max_out; i++)
+        pos = nt__bpe_int_expand(b, ids[i], out, max_out, pos);
+    return pos;
+}
+
+void nt_bpe_int_free(nt_bpe_int* b) {
+    if (!b) return;
+    free(b->merge_a);
+    free(b->merge_b);
+    free(b);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

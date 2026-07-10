@@ -407,6 +407,25 @@ char* nt_bpe_decode(const nt_bpe* bpe, const int* ids, int n_ids);
 // Free BPE
 void nt_bpe_free(nt_bpe* bpe);
 
+// ── Integer BPE (byte-base 0-255, merges "id_a id_b" → 256+i) ─────────────────
+// Robust for raw text: all-integer, no string/delimiter/control-byte issues.
+typedef struct {
+    int* merge_a;   // [n_merges] left operand id
+    int* merge_b;   // [n_merges] right operand id
+    int  n_merges;
+    int  vocab;     // 256 + n_merges
+} nt_bpe_int;
+
+// Load merges file (each line "id_a id_b"). Returns NULL on failure.
+nt_bpe_int* nt_bpe_int_load(const char* merges_file);
+// Encode raw bytes → token ids (base id = byte; merge i → id 256+i). Returns n_ids.
+int nt_bpe_int_encode(const nt_bpe_int* b, const unsigned char* bytes, int n_bytes,
+                      int* out_ids, int max_ids);
+// Decode token ids → bytes (recursive expand). Returns n_bytes written.
+int nt_bpe_int_decode(const nt_bpe_int* b, const int* ids, int n_ids,
+                      unsigned char* out, int max_out);
+void nt_bpe_int_free(nt_bpe_int* b);
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // DATALOADER — batch iterator for training
 // ═══════════════════════════════════════════════════════════════════════════════

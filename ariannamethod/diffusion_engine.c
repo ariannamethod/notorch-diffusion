@@ -20,12 +20,12 @@
 
 /* ── Config (must match train_diffusion.c) ──────────────────────────────── */
 
-#define D_V        256
-#define D_MASK     0
-#define D_E        192
+#define D_V        2049
+#define D_MASK     2048
+#define D_E        288
 #define D_H        6
 #define D_HD       (D_E / D_H)
-#define D_FFN      768
+#define D_FFN      1152
 #define D_CTX      128
 #define D_N_LAYERS 6
 #define D_T_MAX    1000
@@ -212,7 +212,7 @@ static void forward_pass(DiffWeights* w, int* tokens, int t, float* logits_out) 
     /* Add timestep to all positions */
     for (int p = 0; p < D_CTX; p++)
         for (int d = 0; d < D_E; d++)
-            s->h[p * D_E + d] += temb_out[d];
+            s->h[p * D_E + d] += temb_out[d] * 0.1f;  /* damp t-emb (sync with train_diffusion, Fable §4) */
 
     /* Transformer blocks */
     for (int l = 0; l < D_N_LAYERS; l++) {
