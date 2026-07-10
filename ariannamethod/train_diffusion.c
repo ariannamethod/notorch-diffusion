@@ -6,8 +6,8 @@
  * Training: mask random tokens at random timestep t, predict originals.
  * Inference: start fully masked → denoise in 20 steps → coherent text.
  *
- * Architecture: ~8.3M params
- *   V=256 (byte-level), E=288, H=6, HD=48, FFN=1152, CTX=128, L=6
+ * Architecture: ~9.35M params (BPE vocab 2048 + MASK)
+ *   V=2049 (BPE), E=288, H=6, HD=48, FFN=1152, CTX=128, L=6
  *   Sinusoidal timestep embedding added to token embeddings
  *   Bidirectional multi-head attention (no causal mask)
  *
@@ -24,8 +24,8 @@
 
 /* ── Config ──────────────────────────────────────────────────────────────── */
 
-#define D_V        256      /* byte-level vocabulary */
-#define D_MASK     0        /* [MASK] token = 0x00 (NUL byte, never in Dracula) */
+#define D_V        2049     /* BPE vocab 2048 + [MASK] */
+#define D_MASK     2048      /* [MASK] token = id after BPE vocab (256 + 1792 merges) */
 #define D_E        288      /* embedding dimension */
 #define D_H        6        /* attention heads */
 #define D_HD       (D_E / D_H)  /* 48 head dim */
@@ -33,7 +33,10 @@
 #define D_CTX      128      /* context window (bytes) */
 #define D_N_LAYERS 6        /* transformer layers */
 #define D_T_MAX    1000     /* max diffusion timesteps */
-#define D_T_EMB    D_E      /* timestep embedding dim = E */
+#define D_T_EMB    D_E
+
+/* BPE tokenizer (integer, byte-base) — singleton, loaded in main() */
+static nt_bpe_int* g_bpe = NULL;      /* timestep embedding dim = E */
 
 /* ── Diffusion schedule ──────────────────────────────────────────────────── */
 
@@ -333,10 +336,11 @@ static void diff_generate(DiffModel* m, int denoise_steps, float temperature) {
                     for (int v = 0; v < D_V; v++) {
                         cum += l[v]; if (cum >= r) { chosen = v; break; }
                     }
-                    /* Skip NUL byte - pick next best */
+                    /* If MASK sampled, pick best real token (exclude MASK) */
                     if (chosen == D_MASK) {
-                        float best = -1; chosen = 32; /* space as fallback */
-                        for (int v = 1; v < D_V; v++) {
+                        float best = -1; chosen = 32; /* space byte as fallback */
+                        for (int v = 0; v < D_V; v++) {
+                            if (v == D_MASK) continue;
                             if (l[v] > best) { best = l[v]; chosen = v; }
                         }
                     }
@@ -361,14 +365,17 @@ static void diff_generate(DiffModel* m, int denoise_steps, float temperature) {
         }
     }
 
-    /* Print final result */
+    /* Print final result (BPE-decode token ids → text) */
     printf("  ── result ──\n  ");
-    for (int i = 0; i < D_CTX; i++) {
-        unsigned char b = (unsigned char)tokens[i];
-        if (b >= 32 && b < 127) printf("%c", b);
-        else if (b == '\n') printf("\n  ");
-        else if (b == D_MASK) printf("_");
-        else printf(".");
+    {
+        unsigned char txt[D_CTX * NT_BPE_MAX_TOKEN_LEN];
+        int nb = g_bpe ? nt_bpe_int_decode(g_bpe, tokens, D_CTX, txt, (int)sizeof(txt)) : 0;
+        for (int i = 0; i < nb; i++) {
+            unsigned char c = txt[i];
+            if (c >= 32 && c < 127) printf("%c", c);
+            else if (c == '\n') printf("\n  ");
+            else printf(".");
+        }
     }
     printf("\n");
 
@@ -383,6 +390,7 @@ int main(int argc, char** argv) {
     float threshold  = argc > 3 ? (float)atof(argv[3]) : 2.5f;
     const char* wpath = argc > 4 ? argv[4] : "../weights/diffusion.bin";
     const char* cpath = argc > 5 ? argv[5] : "../dracula.txt";
+    const char* mpath = argc > 6 ? argv[6] : "../tokenizer/dracula_bpe_merges.txt";
 
     printf("════════════════════════════════════════════════════════════\n");
     printf("  Dracula Diffusion — Discrete Masked Diffusion (notorch)\n");
@@ -403,9 +411,20 @@ int main(int argc, char** argv) {
     fclose(f);
     printf("corpus: %ld bytes (%.1f KB)\n", fsize, fsize / 1024.0);
 
-    /* Map NUL bytes in corpus to space (NUL = MASK token) */
-    for (long i = 0; i < fsize; i++)
-        if (data[i] == D_MASK) data[i] = ' ';
+    /* BPE-encode corpus: raw bytes → token ids */
+    g_bpe = nt_bpe_int_load(mpath);
+    if (!g_bpe) { printf("ERROR: cannot load merges %s\n", mpath); free(data); return 1; }
+    int* tokens = (int*)malloc(sizeof(int) * fsize);
+    if (!tokens) { free(data); return 1; }
+    int n_tokens = nt_bpe_int_encode(g_bpe, data, (int)fsize, tokens, (int)fsize);
+    free(data);   /* raw bytes no longer needed */
+    printf("BPE: %d merges, vocab %d → %d tokens (%.2f bytes/token)\n",
+           g_bpe->n_merges, g_bpe->vocab, n_tokens, (double)fsize / n_tokens);
+    if (g_bpe->vocab != D_MASK) {
+        printf("ERROR: BPE vocab %d != D_MASK %d (merges/model mismatch)\n", g_bpe->vocab, D_MASK);
+        return 1;
+    }
+    if (n_tokens <= D_CTX) { printf("ERROR: corpus too small (%d tokens)\n", n_tokens); return 1; }
 
     /* Create model */
     nt_seed(42);
@@ -428,11 +447,11 @@ int main(int argc, char** argv) {
     for (int step = 0; step < steps; step++) {
         float lr = nt_schedule_get_lr(&sched);
 
-        /* Random position in corpus */
-        int off = rand() % (int)(fsize - D_CTX);
+        /* Random position in corpus (token stream) */
+        int off = rand() % (n_tokens - D_CTX + 1);
         int clean[D_CTX], noisy[D_CTX];
         for (int i = 0; i < D_CTX; i++)
-            clean[i] = data[off + i];
+            clean[i] = tokens[off + i];
 
         /* Random timestep */
         int t = 1 + rand() % D_T_MAX;
@@ -504,7 +523,8 @@ int main(int argc, char** argv) {
     diff_generate(model, 20, 0.5f);
 
     diff_model_free(model);
-    free(data);
+    free(tokens);            /* data was freed after BPE-encode */
+    nt_bpe_int_free(g_bpe);
 
     printf("\n════════════════════════════════════════════════════════════\n");
     printf("  Dracula Diffusion complete. Text reveals from noise.\n");

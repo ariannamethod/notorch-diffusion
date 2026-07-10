@@ -2500,6 +2500,76 @@ void nt_bpe_free(nt_bpe* bpe) {
     free(bpe);
 }
 
+// ── Integer BPE (byte-base, "id_a id_b" merges → 256+i) ──────────────────────
+nt_bpe_int* nt_bpe_int_load(const char* merges_file) {
+    FILE* f = fopen(merges_file, "r");
+    if (!f) return NULL;
+    nt_bpe_int* b = (nt_bpe_int*)calloc(1, sizeof(nt_bpe_int));
+    if (!b) { fclose(f); return NULL; }
+    b->merge_a = (int*)malloc(NT_BPE_MAX_MERGES * sizeof(int));
+    b->merge_b = (int*)malloc(NT_BPE_MAX_MERGES * sizeof(int));
+    if (!b->merge_a || !b->merge_b) { nt_bpe_int_free(b); fclose(f); return NULL; }
+    char line[128];
+    while (fgets(line, sizeof(line), f) && b->n_merges < NT_BPE_MAX_MERGES) {
+        int a, bb;
+        if (sscanf(line, "%d %d", &a, &bb) != 2) continue;
+        b->merge_a[b->n_merges] = a;
+        b->merge_b[b->n_merges] = bb;
+        b->n_merges++;
+    }
+    fclose(f);
+    b->vocab = 256 + b->n_merges;
+    return b;
+}
+
+int nt_bpe_int_encode(const nt_bpe_int* b, const unsigned char* bytes, int n_bytes,
+                      int* out_ids, int max_ids) {
+    if (!b || !bytes || !out_ids || max_ids <= 0) return 0;
+    int n = n_bytes < max_ids ? n_bytes : max_ids;
+    for (int i = 0; i < n; i++) out_ids[i] = (int)bytes[i];   // base = byte ids
+    // Apply merges in learned order; each pass rewrites in place, compacting.
+    for (int m = 0; m < b->n_merges; m++) {
+        int a = b->merge_a[m], bb = b->merge_b[m], res = 256 + m;
+        int w = 0;
+        for (int r = 0; r < n; ) {
+            if (r < n - 1 && out_ids[r] == a && out_ids[r + 1] == bb) {
+                out_ids[w++] = res; r += 2;
+            } else {
+                out_ids[w++] = out_ids[r]; r += 1;
+            }
+        }
+        n = w;
+    }
+    return n;
+}
+
+static int nt__bpe_int_expand(const nt_bpe_int* b, int id,
+                              unsigned char* out, int max_out, int pos) {
+    if (pos >= max_out) return pos;
+    if (id < 256) { out[pos++] = (unsigned char)id; return pos; }
+    int m = id - 256;
+    if (m < 0 || m >= b->n_merges) return pos;   // invalid id → skip
+    pos = nt__bpe_int_expand(b, b->merge_a[m], out, max_out, pos);
+    pos = nt__bpe_int_expand(b, b->merge_b[m], out, max_out, pos);
+    return pos;
+}
+
+int nt_bpe_int_decode(const nt_bpe_int* b, const int* ids, int n_ids,
+                      unsigned char* out, int max_out) {
+    if (!b || !ids || !out || max_out <= 0) return 0;
+    int pos = 0;
+    for (int i = 0; i < n_ids && pos < max_out; i++)
+        pos = nt__bpe_int_expand(b, ids[i], out, max_out, pos);
+    return pos;
+}
+
+void nt_bpe_int_free(nt_bpe_int* b) {
+    if (!b) return;
+    free(b->merge_a);
+    free(b->merge_b);
+    free(b);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // DATALOADER
 // ═══════════════════════════════════════════════════════════════════════════════

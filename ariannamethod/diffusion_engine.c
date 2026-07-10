@@ -20,8 +20,8 @@
 
 /* ── Config (must match train_diffusion.c) ──────────────────────────────── */
 
-#define D_V        256
-#define D_MASK     0
+#define D_V        2049
+#define D_MASK     2048
 #define D_E        288
 #define D_H        6
 #define D_HD       (D_E / D_H)
