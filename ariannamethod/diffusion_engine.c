@@ -22,10 +22,10 @@
 
 #define D_V        256
 #define D_MASK     0
-#define D_E        192
+#define D_E        288
 #define D_H        6
 #define D_HD       (D_E / D_H)
-#define D_FFN      768
+#define D_FFN      1152
 #define D_CTX      128
 #define D_N_LAYERS 6
 #define D_T_MAX    1000

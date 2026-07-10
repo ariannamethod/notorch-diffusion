@@ -5,7 +5,7 @@
 **Three neural architectures trained with [notorch](https://github.com/ariannamethod/notorch) + [Chuck optimizer](https://github.com/ariannamethod/chuck.optimizer). No PyTorch.**
 
 1. **HeVLM** — 1.12M param Hebrew character-level transformer (autoregressive)
-2. **Dracula Diffusion** — 3.74M param discrete masked diffusion on English text (bidirectional)
+2. **Dracula Diffusion** — 8.32M param discrete masked diffusion on English text (bidirectional)
 3. **Hebrew Diffusion** — 1.78M param discrete masked diffusion on Hebrew text with MetaWeights (γ) guidance
 
 ---
@@ -16,11 +16,11 @@
 
 |               | Value                |
 |---------------|----------------------|
-| **Parameters**| 3,738,048 (~3.74M)  |
+| **Parameters**| 8,316,576 (~8.32M)  |
 | **Architecture** | 6-layer Bidirectional Transformer |
-| **Embedding** | 192                  |
-| **Heads**     | 6 (head dim 32)      |
-| **FFN**       | 768                  |
+| **Embedding** | 288                  |
+| **Heads**     | 6 (head dim 48)      |
+| **FFN**       | 1152                 |
 | **Context**   | 128 bytes            |
 | **Vocab**     | 256 (byte-level)     |
 | **Attention** | Bidirectional (no causal mask) |

@@ -6,8 +6,8 @@
  * Training: mask random tokens at random timestep t, predict originals.
  * Inference: start fully masked → denoise in 20 steps → coherent text.
  *
- * Architecture: ~3M params
- *   V=256 (byte-level), E=192, H=6, HD=32, FFN=768, CTX=128, L=6
+ * Architecture: ~8.3M params
+ *   V=256 (byte-level), E=288, H=6, HD=48, FFN=1152, CTX=128, L=6
  *   Sinusoidal timestep embedding added to token embeddings
  *   Bidirectional multi-head attention (no causal mask)
  *
@@ -26,10 +26,10 @@
 
 #define D_V        256      /* byte-level vocabulary */
 #define D_MASK     0        /* [MASK] token = 0x00 (NUL byte, never in Dracula) */
-#define D_E        192      /* embedding dimension */
+#define D_E        288      /* embedding dimension */
 #define D_H        6        /* attention heads */
-#define D_HD       (D_E / D_H)  /* 32 head dim */
-#define D_FFN      768      /* FFN hidden dim */
+#define D_HD       (D_E / D_H)  /* 48 head dim */
+#define D_FFN      1152     /* FFN hidden dim */
 #define D_CTX      128      /* context window (bytes) */
 #define D_N_LAYERS 6        /* transformer layers */
 #define D_T_MAX    1000     /* max diffusion timesteps */
