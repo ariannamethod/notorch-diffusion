@@ -391,6 +391,7 @@ int main(int argc, char** argv) {
     const char* wpath = argc > 4 ? argv[4] : "../weights/diffusion.bin";
     const char* cpath = argc > 5 ? argv[5] : "../dracula.txt";
     const char* mpath = argc > 6 ? argv[6] : "../tokenizer/dracula_bpe_merges.txt";
+    int overfit_off = argc > 7 ? atoi(argv[7]) : -1;  /* >=0: fix window (demo/overfit); else random */
 
     printf("════════════════════════════════════════════════════════════\n");
     printf("  Dracula Diffusion — Discrete Masked Diffusion (notorch)\n");
@@ -425,6 +426,8 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (n_tokens <= D_CTX) { printf("ERROR: corpus too small (%d tokens)\n", n_tokens); return 1; }
+    if (overfit_off > n_tokens - D_CTX) overfit_off = n_tokens - D_CTX;   /* clamp fixed window */
+    if (overfit_off >= 0) printf("OVERFIT: fixed window off=%d\n", overfit_off);
 
     /* Create model */
     nt_seed(42);
@@ -451,8 +454,8 @@ int main(int argc, char** argv) {
     for (int step = 0; step < steps; step++) {
         float lr = nt_schedule_get_lr(&sched);
 
-        /* Random position in corpus (token stream) */
-        int off = rand() % (n_tokens - D_CTX + 1);
+        /* Position in corpus: fixed window (overfit/demo) or random */
+        int off = (overfit_off >= 0) ? overfit_off : rand() % (n_tokens - D_CTX + 1);
         int clean[D_CTX], noisy[D_CTX];
         for (int i = 0; i < D_CTX; i++)
             clean[i] = tokens[off + i];
