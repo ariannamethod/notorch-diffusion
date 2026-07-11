@@ -392,6 +392,7 @@ int main(int argc, char** argv) {
     const char* cpath = argc > 5 ? argv[5] : "../dracula.txt";
     const char* mpath = argc > 6 ? argv[6] : "../tokenizer/dracula_bpe_merges.txt";
     int overfit_off = argc > 7 ? atoi(argv[7]) : -1;  /* >=0: fix window (demo/overfit); else random */
+    int stage_a_steps = argc > 8 ? atoi(argv[8]) : 0; /* >0: BERT-band curriculum r~U[.10,.30] first N steps (Fable) */
 
     printf("════════════════════════════════════════════════════════════\n");
     printf("  Dracula Diffusion — Discrete Masked Diffusion (notorch)\n");
@@ -460,9 +461,19 @@ int main(int argc, char** argv) {
         for (int i = 0; i < D_CTX; i++)
             clean[i] = tokens[off + i];
 
-        /* Random timestep */
-        int t = 1 + rand() % D_T_MAX;
-        float rate = mask_rate(t);
+        /* Timestep + mask rate. Stage-A curriculum (Fable): first stage_a_steps use
+         * a BERT-band rate r~U[0.10,0.30] (forces context-use — unigram is bad there),
+         * with a consistent t for the timestep embedding; then full cosine schedule
+         * (high mask needed for MaskGIT generation from 100% mask). */
+        int t; float rate;
+        if (stage_a_steps > 0 && step < stage_a_steps) {
+            rate = 0.10f + 0.20f * ((float)rand() / (float)RAND_MAX);
+            t = (int)((2.0f * D_T_MAX / 3.14159265f) * acosf(1.0f - rate) + 0.5f);
+            if (t < 1) t = 1;
+        } else {
+            t = 1 + rand() % D_T_MAX;
+            rate = mask_rate(t);
+        }
 
         /* Apply masking */
         for (int i = 0; i < D_CTX; i++) {
