@@ -385,17 +385,20 @@ static void diff_generate(DiffModel* m, int denoise_steps, float temperature) {
 /* ── Main ────────────────────────────────────────────────────────────────── */
 
 int main(int argc, char** argv) {
+    setvbuf(stdout, NULL, _IOLBF, 0);   /* line-buffered: progress stays visible when redirected to a file */
     int steps        = argc > 1 ? atoi(argv[1]) : 5000;
     float base_lr    = argc > 2 ? (float)atof(argv[2]) : 3e-4f;
     float threshold  = argc > 3 ? (float)atof(argv[3]) : 2.5f;
     const char* wpath = argc > 4 ? argv[4] : "../weights/diffusion.bin";
     const char* cpath = argc > 5 ? argv[5] : "../dracula.txt";
     const char* mpath = argc > 6 ? argv[6] : "../tokenizer/dracula_bpe_merges.txt";
+    int batch = argc > 7 ? atoi(argv[7]) : 1;   /* grad-accum microbatches/step (1 = single-sample, backward compat) */
+    if (batch < 1) batch = 1;
 
     printf("════════════════════════════════════════════════════════════\n");
     printf("  Dracula Diffusion — Discrete Masked Diffusion (notorch)\n");
     printf("  V=%d E=%d H=%d FFN=%d CTX=%d L=%d\n", D_V, D_E, D_H, D_FFN, D_CTX, D_N_LAYERS);
-    printf("  Chuck optimizer, %d steps, lr=%.1e\n", steps, base_lr);
+    printf("  Chuck optimizer, %d steps, lr=%.1e, batch=%d\n", steps, base_lr, batch);
     printf("  Noise: cosine schedule, T_max=%d\n", D_T_MAX);
     printf("════════════════════════════════════════════════════════════\n");
 
@@ -447,41 +450,69 @@ int main(int argc, char** argv) {
     for (int step = 0; step < steps; step++) {
         float lr = nt_schedule_get_lr(&sched);
 
-        /* Random position in corpus (token stream) */
-        int off = rand() % (n_tokens - D_CTX + 1);
-        int clean[D_CTX], noisy[D_CTX];
-        for (int i = 0; i < D_CTX; i++)
-            clean[i] = tokens[off + i];
+        /* Grad-accum over `batch` microbatches: each microbatch is one random
+           window (forward+backward+accum); one Chuck step on the averaged
+           gradient. batch=1 routes through acc_grad with scale 1.0 → numerically
+           the original single-sample path. Cleaner averaged gradient per step
+           breaches the masked-recon sample-inefficiency wall (RGF_LOG 07-12). */
+        float loss_sum = 0.0f;
+        int   n_good = 0;
+        int   t = 0;          /* last microbatch's timestep/rate — for the log line */
+        float rate = 0.0f;
 
-        /* Random timestep */
-        int t = 1 + rand() % D_T_MAX;
-        float rate = mask_rate(t);
+        for (int mb = 0; mb < batch; mb++) {
+            /* Random position in corpus (token stream) */
+            int off = rand() % (n_tokens - D_CTX + 1);
+            int clean[D_CTX], noisy[D_CTX];
+            for (int i = 0; i < D_CTX; i++)
+                clean[i] = tokens[off + i];
 
-        /* Apply masking */
-        for (int i = 0; i < D_CTX; i++) {
-            float r = (float)rand() / (float)RAND_MAX;
-            noisy[i] = (r < rate) ? D_MASK : clean[i];
+            /* Random timestep */
+            t = 1 + rand() % D_T_MAX;
+            rate = mask_rate(t);
+
+            /* Apply masking; count masked positions */
+            int nm = 0;
+            for (int i = 0; i < D_CTX; i++) {
+                float r = (float)rand() / (float)RAND_MAX;
+                if (r < rate) { noisy[i] = D_MASK; nm++; }
+                else            noisy[i] = clean[i];
+            }
+            /* Zero-supervision window (low t → 0 masks): masked-CE over the empty
+               set is 0.0 and would collapse best_loss. Nothing to learn here —
+               skip, same path as a NaN microbatch (no accum, no n_good). */
+            if (nm == 0) continue;
+
+            nt_tape_start();      /* wipes prev microbatch's graph; acc_grad persists */
+            nt_train_mode(1);
+            int loss_idx = diff_forward(model, noisy, clean, t);
+            float loss_val = nt_tape_get()->entries[loss_idx].output->data[0];
+            nt_tape_backward(loss_idx);
+
+            if (!nt_nan_guard_check(&guard)) {
+                if (step % 100 == 0)
+                    printf("  step %4d: NaN detected (mb %d), skipping microbatch\n", step + 1, mb);
+                continue;   /* don't accumulate NaN grads; next tape_start wipes this graph */
+            }
+            nt_tape_accum_grads();   /* += grad into persistent per-param acc_grad */
+            loss_sum += loss_val;
+            n_good++;
         }
 
-        nt_tape_start();
-        nt_train_mode(1);
-        int loss_idx = diff_forward(model, noisy, clean, t);
-        float loss_val = nt_tape_get()->entries[loss_idx].output->data[0];
+        if (n_good == 0) {
+            nt_tape_clear();
+            continue;   /* whole step was NaN; acc_grad already zero from last apply */
+        }
 
+        float loss_val = loss_sum / (float)n_good;
         if (step == 0) { first_loss = loss_val; loss_ema = loss_val; }
         last_loss = loss_val;
         loss_ema = 0.99f * loss_ema + 0.01f * loss_val;
         if (loss_val < best_loss) best_loss = loss_val;
 
-        nt_tape_backward(loss_idx);
-
-        if (!nt_nan_guard_check(&guard)) {
-            if (step % 100 == 0)
-                printf("  step %4d: NaN detected, skipping\n", step + 1);
-            nt_tape_clear();
-            continue;
-        }
-
+        /* Averaged gradient lives in acc_grad; write it onto the live tape's
+           params (last microbatch registered them), then one Chuck step. */
+        nt_tape_apply_accum(n_good);
         nt_tape_clip_grads(1.0f);
         nt_tape_chuck_step(lr, loss_val);
         nt_tape_clear();
