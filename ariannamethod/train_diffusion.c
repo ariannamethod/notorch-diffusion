@@ -470,11 +470,17 @@ int main(int argc, char** argv) {
             t = 1 + rand() % D_T_MAX;
             rate = mask_rate(t);
 
-            /* Apply masking */
+            /* Apply masking; count masked positions */
+            int nm = 0;
             for (int i = 0; i < D_CTX; i++) {
                 float r = (float)rand() / (float)RAND_MAX;
-                noisy[i] = (r < rate) ? D_MASK : clean[i];
+                if (r < rate) { noisy[i] = D_MASK; nm++; }
+                else            noisy[i] = clean[i];
             }
+            /* Zero-supervision window (low t → 0 masks): masked-CE over the empty
+               set is 0.0 and would collapse best_loss. Nothing to learn here —
+               skip, same path as a NaN microbatch (no accum, no n_good). */
+            if (nm == 0) continue;
 
             nt_tape_start();      /* wipes prev microbatch's graph; acc_grad persists */
             nt_train_mode(1);
