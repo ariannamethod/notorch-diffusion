@@ -385,6 +385,7 @@ static void diff_generate(DiffModel* m, int denoise_steps, float temperature) {
 /* ── Main ────────────────────────────────────────────────────────────────── */
 
 int main(int argc, char** argv) {
+    setvbuf(stdout, NULL, _IOLBF, 0);   /* line-buffered: progress stays visible when redirected to a file */
     int steps        = argc > 1 ? atoi(argv[1]) : 5000;
     float base_lr    = argc > 2 ? (float)atof(argv[2]) : 3e-4f;
     float threshold  = argc > 3 ? (float)atof(argv[3]) : 2.5f;
