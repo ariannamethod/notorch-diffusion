@@ -447,6 +447,12 @@ int main(int argc, char** argv) {
     float first_loss = 0, last_loss = 0, best_loss = 999.0f;
     float loss_ema = 0;
 
+    /* Periodic checkpoint so a killed long run doesn't lose everything.
+       Latest weights -> <wpath>.ckpt every steps/10 (overwrite). */
+    int ckpt_every = steps / 10; if (ckpt_every < 1) ckpt_every = 1;
+    char ckpt_path[600];
+    snprintf(ckpt_path, sizeof(ckpt_path), "%s.ckpt", wpath);
+
     for (int step = 0; step < steps; step++) {
         float lr = nt_schedule_get_lr(&sched);
 
@@ -521,6 +527,11 @@ int main(int argc, char** argv) {
             double elapsed = (double)(clock() - t0) / CLOCKS_PER_SEC;
             printf("  step %4d | loss %.4f | ema %.4f | best %.4f | t=%d mask=%.0f%% | lr %.2e | %.1fs\n",
                    step + 1, loss_val, loss_ema, best_loss, t, rate * 100, lr, elapsed);
+        }
+
+        if ((step + 1) % ckpt_every == 0 && step + 1 < steps) {
+            diff_model_save(model, ckpt_path);
+            printf("  [checkpoint @ step %d -> %s]\n", step + 1, ckpt_path);
         }
     }
 
